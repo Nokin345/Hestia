@@ -1,11 +1,16 @@
 # Python
 backend/.venv/
 backend/data/
+backend/uploads/
+backend/build/
+*.egg-info/
 __pycache__/
 *.pyc
 
 # Env
 .env
+.env.local
+.env.*.local
 
 # Node
 frontend/node_modules/
@@ -14,8 +19,13 @@ frontend/dist/
 # Uploads
 uploads/
 
+# Backups
+.snapshots/
+
 # Editor / OS
 .DS_Store
 .idea/
 .vscode/
+*.swp
+*.kate-swp
 data/sandbox/
