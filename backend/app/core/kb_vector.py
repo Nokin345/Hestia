@@ -1,0 +1,164 @@
+"""ChromaDB-backed vector store for the global knowledge base.
+
+Chunks of uploaded KB documents are embedded and stored in a dedicated
+ChromD collection (``hestia_kb``). Best effort: if ChromaDB or an embedding
+backend is unavailable the store reports not healthy and KB search degrades
+to a no-op (empty results).
+"""
+
+import asyncio
+import logging
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.config import get_settings
+from app.core.embedding_config import load_embedding_config
+from app.core.embedding_lanes import build_embedding_lane
+
+logger = logging.getLogger(__name__)
+
+COLLECTION_NAME = "hestia_kb"
+RAG_SIMILARITY_THRESHOLD = 0.35
+
+
+class KbVectorStore:
+    """Vector index over KB document chunks."""
+
+    def __init__(self, lane):
+        self._lane = lane
+
+    @property
+    def healthy(self) -> bool:
+        return self._lane is not None and self._lane.healthy
+
+    def count(self) -> int:
+        if not self.healthy:
+            return 0
+        return self._lane.count()
+
+    def add_document_chunks(self, doc_id: str, chunks: list[str], filename: str) -> None:
+        """Embed and index all chunks of a document (replaces any existing)."""
+        if not self.healthy or not chunks:
+            return
+        try:
+            self.remove_document(doc_id)
+            ids = [f"{doc_id}::{i}" for i in range(len(chunks))]
+            self._lane.collection.add(
+                ids=ids,
+                embeddings=self._lane.encode(chunks),
+                documents=chunks,
+                metadatas=[
+                    {"doc_id": doc_id, "filename": filename, "chunk": i}
+                    for i in range(len(chunks))
+                ],
+            )
+        except Exception as e:
+            logger.warning("KB vector add failed for %s: %s", doc_id, e)
+
+    def remove_document(self, doc_id: str) -> None:
+        if not self.healthy:
+            return
+        try:
+            where = {"doc_id": doc_id}
+            existing = self._lane.collection.get(where=where, include=[])
+            if existing["ids"]:
+                self._lane.collection.delete(ids=existing["ids"])
+        except Exception as e:
+            logger.warning("KB vector remove failed for %s: %s", doc_id, e)
+
+    def search(
+        self,
+        query: str,
+        k: int = 5,
+        threshold: float = RAG_SIMILARITY_THRESHOLD,
+        doc_ids: list[str] | None = None,
+    ) -> list[dict]:
+        """Return relevant chunks above the similarity threshold.
+
+        Each result carries ``document`` (chunk text), ``metadata`` and
+        ``similarity`` (0..1, cosine distance inverted). If ``doc_ids`` is
+        given, only chunks belonging to those documents are considered.
+        """
+        if not self.healthy or self.count() == 0:
+            return []
+        try:
+            n = self.count()
+            kwargs: dict = {}
+            if doc_ids:
+                kwargs["where"] = {"doc_id": {"$in": doc_ids}}
+            results = self._lane.collection.query(
+                query_embeddings=self._lane.encode([query]),
+                n_results=min(k * 3, n),
+                include=["documents", "metadatas", "distances"],
+                **kwargs,
+            )
+        except Exception as e:
+            logger.warning("KB vector search failed: %s", e)
+            return []
+
+        docs = results["documents"][0] or []
+        metas = results["metadatas"][0] or []
+        dists = results["distances"][0] or []
+        out: list[dict] = []
+        for doc, meta, dist in zip(docs, metas, dists):
+            sim = max(0.0, 1.0 - dist)
+            if sim < threshold:
+                continue
+            out.append(
+                {
+                    "document": doc,
+                    "metadata": {
+                        "doc_id": meta.get("doc_id", ""),
+                        "filename": meta.get("filename", "unknown"),
+                        "chunk": meta.get("chunk", 0),
+                    },
+                    "similarity": round(sim, 3),
+                }
+            )
+            if len(out) >= k:
+                break
+        return out
+
+    def get_stats(self) -> dict:
+        if self._lane is None:
+            return {"healthy": False, "count": 0, "lane": None, "model": None, "dimension": None}
+        return {
+            "healthy": self.healthy,
+            "count": self.count(),
+            "lane": self._lane.name,
+            "model": self._lane.model,
+            "dimension": self._lane.dimension,
+        }
+
+
+_lane = None
+_lock = asyncio.Lock()
+
+
+def _config_key(cfg) -> str:
+    return "|".join([cfg.url or "", cfg.model or "", cfg.api_key or ""])
+
+
+async def get_kb_store(db: AsyncSession) -> KbVectorStore:
+    """Get (or build) the singleton KB store, reacting to settings changes."""
+    global _lane
+    async with _lock:
+        cfg = await load_embedding_config(db)
+        key = _config_key(cfg)
+        if _lane is not None and getattr(_lane, "_key", None) == key:
+            return KbVectorStore(_lane)
+
+        try:
+            settings = get_settings()
+            lane = build_embedding_lane(COLLECTION_NAME, cfg, settings.data_dir)
+            setattr(lane, "_key", key)
+            _lane = lane
+        except Exception as e:
+            logger.warning("KB vector store init failed: %s", e)
+            _lane = None
+        return KbVectorStore(_lane)
+
+
+def reset_kb_store() -> None:
+    global _lane
+    _lane = None

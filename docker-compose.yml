@@ -1,0 +1,40 @@
+name: hestia
+
+services:
+  app:
+    build: .
+    container_name: hestia-app
+    env_file: .env
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////app/data/hestia.db
+      - UPLOAD_DIR=/app/uploads
+      - FRONTEND_DIST=/app/static
+      - TZ=${TZ:-UTC}
+      - CODE_EXEC_URL=http://sandbox:8000
+      - SEARXNG_URL=${SEARXNG_URL:-}
+      - EMBEDDING_URL=${EMBEDDING_URL:-}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
+    volumes:
+      - backend_data:/app/data
+      - ${UPLOAD_DIR:-./uploads}:/app/uploads
+    ports:
+      - "${WEB_PORT:-8080}:8000"
+    restart: unless-stopped
+
+  sandbox:
+    build: ./sandbox
+    container_name: hestia-sandbox
+    environment:
+      - SANDBOX_IMAGE=python:3.12-slim
+      - SANDBOX_TIMEOUT=60
+      - SANDBOX_MEM=512m
+      - SANDBOX_CODE_DIR=/var/lib/sandbox
+      - SANDBOX_HOST_DIR=${PWD}/data/sandbox
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}/data/sandbox:/var/lib/sandbox
+    restart: unless-stopped
+
+volumes:
+  backend_data:

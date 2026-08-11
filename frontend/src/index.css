@@ -1,0 +1,101 @@
+@import "tailwindcss";
+@import "katex/dist/katex.min.css";
+@import "highlight.js/styles/github-dark.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(63 63 70) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgb(63 63 70);
+  border-radius: 9999px;
+}
+
+.prose-chat {
+  line-height: 1.75;
+  font-size: 0.9375rem;
+}
+
+.prose-chat .katex-display {
+  margin: 0.5em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.prose-chat pre {
+  @apply my-3 rounded-lg bg-zinc-900 p-3 overflow-x-auto text-sm;
+}
+
+.prose-chat code {
+  @apply text-sm;
+}
+
+.prose-chat :not(pre) > code {
+  @apply rounded bg-zinc-800 px-1.5 py-0.5 text-[0.85em] text-indigo-300;
+}
+
+.prose-chat-on-bubble a {
+  @apply text-white underline underline-offset-2;
+}
+
+.prose-chat-on-bubble :not(pre) > code {
+  @apply bg-white/20 text-white;
+}
+
+.prose-chat-on-bubble pre {
+  @apply bg-zinc-950/80;
+}
+
+.prose-chat a {
+  @apply text-indigo-400 underline underline-offset-2;
+}
+
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3,
+.prose-chat h4 {
+  @apply font-semibold mt-4 mb-2;
+}
+
+.prose-chat ul {
+  @apply list-disc pl-5 my-2;
+}
+
+.prose-chat ol {
+  @apply list-decimal pl-5 my-2;
+}
+
+.prose-chat blockquote {
+  @apply border-l-2 border-zinc-700 pl-3 italic text-zinc-400 my-2;
+}
+
+.prose-chat table {
+  @apply border-collapse my-3 text-sm;
+}
+
+.prose-chat th,
+.prose-chat td {
+  @apply border border-zinc-700 px-3 py-1.5;
+}
