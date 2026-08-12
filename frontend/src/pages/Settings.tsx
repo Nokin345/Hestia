@@ -23,6 +23,7 @@ export default function SettingsPage() {
   const { data: allModels } = useQuery({
     queryKey: ['models'],
     queryFn: () => apiFetch<ModelEntry[]>('/providers/models'),
+    refetchOnWindowFocus: true,
   })
 
   const [defaultModel, setDefaultModel] = useState<string>('')
@@ -187,6 +188,8 @@ export default function SettingsPage() {
         })
       }
       await queryClient.invalidateQueries({ queryKey: ['providers'] })
+      await queryClient.invalidateQueries({ queryKey: ['models'] })
+      await queryClient.invalidateQueries({ queryKey: ['defaults'] })
       resetForm()
     } catch (e) {
       setFormError((e as Error).message)
@@ -218,6 +221,8 @@ export default function SettingsPage() {
       return next
     })
     await queryClient.invalidateQueries({ queryKey: ['providers'] })
+    await queryClient.invalidateQueries({ queryKey: ['models'] })
+    await queryClient.invalidateQueries({ queryKey: ['defaults'] })
   }
 
   const toggleEnabled = (p: Provider) => {
@@ -302,6 +307,8 @@ export default function SettingsPage() {
         })
       }
       await queryClient.invalidateQueries({ queryKey: ['providers'] })
+      await queryClient.invalidateQueries({ queryKey: ['models'] })
+      await queryClient.invalidateQueries({ queryKey: ['defaults'] })
       setPendingAllowed((prev) => {
         const next = { ...prev }
         delete next[p.id]
