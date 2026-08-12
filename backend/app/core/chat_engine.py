@@ -446,6 +446,16 @@ class ChatEngine:
                 res = await asyncio.wait_for(
                     httpx.AsyncClient(timeout=300).post(url, json=data), timeout=300
                 )
+                if res.status_code != 200:
+                    detail = ""
+                    try:
+                        detail = res.json().get("detail", "")
+                    except Exception:
+                        pass
+                    return False, (
+                        f"run_code: sandbox error"
+                        + (f": {detail}" if detail else f" (HTTP {res.status_code})")
+                    )
                 result = res.json()
                 stdout = str(result.get("stdout") or "")
                 stderr = str(result.get("stderr") or "")
