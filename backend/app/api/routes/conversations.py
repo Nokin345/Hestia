@@ -1,11 +1,14 @@
 import json
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
+from app.config import get_settings
 from app.core.chat_engine import ChatEngine, parts_from_json, parts_to_json
 from app.db import get_db
 from app.models import Conversation, Message
@@ -134,6 +137,12 @@ async def delete_conversation(conversation_id: str, db: AsyncSession = Depends(g
     )
     await db.delete(conv)
     await db.commit()
+
+    # Remove the conversation's attachment folder (/uploads/<convo_id>/) so no
+    # files are left behind when the history is deleted.
+    upload_dir = Path(get_settings().upload_dir) / conversation_id
+    if upload_dir.is_dir():
+        shutil.rmtree(upload_dir, ignore_errors=True)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageOut])

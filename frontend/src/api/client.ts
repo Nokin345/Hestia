@@ -38,9 +38,15 @@ export interface UploadResult {
   size: number
 }
 
-export async function apiUpload(file: File): Promise<UploadResult> {
+export async function apiUpload(
+  file: File,
+  conversationId?: string,
+): Promise<UploadResult> {
   const form = new FormData()
   form.append('file', file)
+  if (conversationId) {
+    form.append('conversation_id', conversationId)
+  }
   const res = await fetch(`${API_BASE}/upload`, {
     method: 'POST',
     credentials: 'include',
