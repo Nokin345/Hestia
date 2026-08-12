@@ -15,7 +15,6 @@ export type ChatEventData =
   | { event: 'delta'; data: { content: string } }
   | { event: 'reasoning'; data: { content: string } }
   | { event: 'memory_retrieved'; data: { count: number; memories?: RetrievedMemory[] } }
-  | { event: 'memory_saved'; data: { text?: string; count?: number } }
   | { event: 'kb_retrieved'; data: { count: number; sources?: KbSource[] } }
   | { event: 'tool_call'; data: { id: string; name: string; arguments: Record<string, unknown> } }
   | { event: 'tool_result'; data: { name: string; ok: boolean; summary: string } }

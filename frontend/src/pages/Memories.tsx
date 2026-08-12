@@ -105,10 +105,16 @@ export default function MemoriesPage() {
   const { data: memories, isLoading } = useQuery({
     queryKey: ['memories'],
     queryFn: () => apiFetch<Memory[]>('/memories'),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 20000,
   })
   const { data: stats } = useQuery({
     queryKey: ['memory-stats'],
     queryFn: () => apiFetch<MemoryStats>('/memories/stats'),
+    staleTime: 0,
+    refetchOnWindowFocus: true,
+    refetchInterval: 20000,
   })
 
   const [text, setText] = useState('')
@@ -226,8 +232,7 @@ export default function MemoriesPage() {
             {editingId ? 'Edit memory' : 'Add a memory'}
           </h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Tip: you can also say &quot;remember: my coffee order&quot; in chat, and the
-            assistant saves facts automatically.
+            Facts the assistant saves automatically as you chat.
           </p>
 
           <div className="mt-4 space-y-3">
@@ -337,8 +342,8 @@ export default function MemoriesPage() {
             </p>
           ) : (memories ?? []).length === 0 ? (
             <p className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-3 text-sm text-zinc-400">
-              No memories saved yet. Add one above, or tell the assistant
-              &quot;remember: …&quot; in chat.
+              No memories saved yet. Add one above, and the assistant will also
+              save facts automatically as you chat.
             </p>
           ) : (
             <>
