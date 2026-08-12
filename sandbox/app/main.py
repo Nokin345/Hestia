@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import tempfile
+from typing import Any
 
 import docker
 from fastapi import FastAPI, HTTPException
@@ -101,13 +102,40 @@ async def run(body: RunRequest) -> RunResult:
             environment=body.env or None,
             command=["sh", "-c", command],
         )
+        def _run(_kwargs: dict) -> Any:
+            try:
+                return c.containers.run(**_kwargs)
+            except docker.errors.ImageNotFound:
+                # Pull can be slow on first run / slow machines; make failures loud.
+                try:
+                    c.images.pull(RUN_IMAGE)
+                except docker.errors.DockerException as e:
+                    logger.exception("failed to pull runtime image")
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"sandbox engine error: image pull failed: {e}",
+                    )
+                return c.containers.run(**_kwargs)
+
         try:
-            container = c.containers.run(**kwargs)
-        except docker.errors.ImageNotFound:
-            c.images.pull(RUN_IMAGE)
-            container = c.containers.run(**kwargs)
+            try:
+                container = _run(kwargs)
+            except docker.errors.DockerException as e:
+                # Some daemons/engines reject nano_cpus / mem_limit (older API,
+                # or restricted hosts). Retry once without resource limits.
+                logger.warning("run failed with limits, retrying without: %s", e)
+                relaxed = {
+                    k: v
+                    for k, v in kwargs.items()
+                    if k not in ("nano_cpus", "mem_limit")
+                }
+                container = _run(relaxed)
         except docker.errors.DockerException as e:
-            raise HTTPException(status_code=503, detail=f"sandbox engine error: {e}")
+            logger.exception("docker engine error")
+            raise HTTPException(
+                status_code=503,
+                detail=f"sandbox engine error: {e}",
+            )
     finally:
         try:
             if container_path:
