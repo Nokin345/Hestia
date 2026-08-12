@@ -189,6 +189,24 @@ export function isPendingToolBubble(b: AssistantBubble): boolean {
   return false
 }
 
+// remark-math allows spaces inside `$...$` spans, so currency amounts like
+// "$5 and $10" would otherwise be swallowed as math. Before the markdown
+// parser sees the text, escape a `$` that is immediately followed by a digit
+// (currency) so it survives as literal text, while genuine formulas such as
+// `$C_5–C_{12}$` still parse as math. Fenced code blocks and inline code
+// spans are masked out first so dollars inside code are never escaped.
+function protectCurrency(raw: string): string {
+  const protectedBlocks: string[] = []
+  const mask = (m: string) => {
+    protectedBlocks.push(m)
+    return `\u0000${protectedBlocks.length - 1}\u0000`
+  }
+  let out = raw.replace(/```[\s\S]*?```/g, mask)
+  out = out.replace(/`[^`]*`/g, mask)
+  out = out.replace(/\$(?=\d)/g, '\\$')
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => protectedBlocks[Number(i)])
+}
+
 // remark-math parses single-line `$$...$$` as inline math, so it never gets
 // the `katex-display` wrapper (and no display styling applies). This promotes
 // a paragraph that is entirely math to the exact `math` (display) node shape
@@ -306,11 +324,11 @@ export const Markdown = memo(function Markdown({
   return (
     <div className={className}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkPromoteDisplayMath]}
+        remarkPlugins={[remarkGfm, remarkMath, remarkPromoteDisplayMath]}
         rehypePlugins={[[rehypeHighlight, { detect: false }], rehypeKatex]}
         components={{ pre: ({ children }) => <CodeBlock>{children}</CodeBlock> }}
       >
-        {content}
+        {protectCurrency(content)}
       </ReactMarkdown>
     </div>
   )
