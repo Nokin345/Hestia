@@ -81,7 +81,7 @@ EMBEDDING_API_KEY=
 
 - **Database, Chroma vectors, and fastembed cache** live under `/app/data` in the named volume `backend_data` (created automatically).
 - **Uploads** are stored on the host at `./uploads` (configurable via `UPLOAD_DIR`).
-- **Sandbox workspaces** are stored on the host under `data/sandbox`.
+- **Sandbox workspaces** live in per-conversation Docker volumes (`hestia-sandbox-*`, created automatically), so executed files and their outputs persist across turns in the same conversation.
 
 ```bash
 # backups
