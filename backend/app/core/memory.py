@@ -226,17 +226,6 @@ async def memory_stats(db: AsyncSession) -> dict[str, Any]:
     return {"total": total, "categories": categories}
 
 
-def process_inline_command(message: str) -> tuple[bool, str]:
-    """Detect "remember: X" style commands. Returns (is_command, extracted_text)."""
-    pattern = re.compile(
-        r"^(?:remember|memorize|save|note|store)[:\-]?\s+(.+)$", re.IGNORECASE
-    )
-    match = pattern.match(message.strip())
-    if match:
-        return True, match.group(1).strip()
-    return False, ""
-
-
 # ---------------------------------------------------------------------------
 # Retrieval (hybrid: keyword + optional semantic embeddings)
 # ---------------------------------------------------------------------------

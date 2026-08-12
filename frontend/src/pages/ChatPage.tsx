@@ -71,14 +71,6 @@ export default function ChatPage() {
   const attachInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const [savedNotice, setSavedNotice] = useState<string | null>(null)
-  const savedNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const flashSavedNotice = useCallback((text: string) => {
-    setSavedNotice(text)
-    if (savedNoticeTimerRef.current) clearTimeout(savedNoticeTimerRef.current)
-    savedNoticeTimerRef.current = setTimeout(() => setSavedNotice(null), 3500)
-  }, [])
   // Keep the most recent retrieved-memory set in a ref so it can be reattached
   // to the assistant message after a conversation reload (e.g. the first-message
   // URL change to ?c=...) without losing the pill.
@@ -455,9 +447,6 @@ export default function ChatPage() {
               : m,
           ),
         )
-      } else if (e.event === 'memory_saved') {
-        const n = e.data.count || 1
-        flashSavedNotice(`Saved ${n} memor${n === 1 ? 'y' : 'ies'}`)
       } else if (e.event === 'kb_retrieved') {
         const id = target()
         if (!id) return
@@ -528,7 +517,7 @@ export default function ChatPage() {
         }
       }
     },
-    [conversationId, model, setSearchParams, flashSavedNotice, reattachRetrieved, upsertAssistant],
+    [conversationId, model, setSearchParams, reattachRetrieved, upsertAssistant],
   )
 
   const send = useCallback(
@@ -913,11 +902,6 @@ export default function ChatPage() {
 
         <div className="border-t border-zinc-800 bg-zinc-950/80 backdrop-blur">
           <div className="relative mx-auto max-w-3xl px-4 py-3">
-            {savedNotice && (
-              <div className="pointer-events-none absolute -top-9 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-indigo-600/40 bg-indigo-950/95 px-3 py-1 text-[11px] text-indigo-200 shadow-lg shadow-black/40">
-                {savedNotice}
-              </div>
-            )}
             <div className="mb-2 flex items-center gap-2">
               <div className="flex items-center gap-2">
                 <ComposerMenu

@@ -17,7 +17,6 @@ from app.core.memory import (
     find_duplicate,
     format_memory_context,
     load_memory_config,
-    process_inline_command,
     select_memories_for_query,
 )
 from app.core.search import fetch_url, search_and_fetch
@@ -233,7 +232,6 @@ class ChatEngine:
         provider_id: str,
         model: str,
         memory_enabled: bool = True,
-        saved_queue: asyncio.Queue[str] | None = None,
     ) -> None:
         try:
             async with SessionLocal() as db:
@@ -258,54 +256,8 @@ class ChatEngine:
                         source="auto",
                         conversation_id=conversation_id,
                     )
-                    if mem is not None and saved_queue is not None:
-                        await saved_queue.put(mem.text)
         except Exception:
             return
-
-    async def _remember_response(
-        self,
-        conversation_id: str,
-        provider_id: str,
-        model: str,
-        remembered: str,
-    ) -> AsyncIterator[dict[str, Any]]:
-        if remembered:
-            await create_memory(
-                self.db,
-                MemoryCreate(text=remembered),
-                source="inline",
-                conversation_id=conversation_id,
-            )
-        ack = "Got it — I've saved that memory."
-        msg = ChatMessage(role="assistant", parts=[MessagePart(type="text", text=ack)])
-        message_id = await self._save_message(msg, conversation_id, model=model)
-        conv = await self.db.get(Conversation, conversation_id)
-        if conv:
-            if not conv.provider:
-                conv.provider = provider_id
-                conv.model = model
-            if conv.title == "New chat" and remembered:
-                conv.title = remembered.replace("\n", " ")[:60]
-        await self.db.commit()
-        yield {
-            "event": "memory_saved",
-            "data": json.dumps({}),
-        }
-        yield {
-            "event": "delta",
-            "data": json.dumps({"content": ack}),
-        }
-        yield {
-            "event": "done",
-            "data": json.dumps(
-                {
-                    "message_id": message_id,
-                    "conversation_id": conversation_id,
-                    "usage": {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0},
-                }
-            ),
-        }
 
     async def _load_history(self, conversation_id: str) -> list[ChatMessage]:
         stmt = (
@@ -569,17 +521,7 @@ class ChatEngine:
         memory_enabled = global_memory_enabled and (
             memory_enabled if memory_enabled is not None else True
         )
-        saved_queue: asyncio.Queue[str] | None = None
         extract_task: asyncio.Task | None = None
-
-        if memory_enabled and user_text:
-            is_command, remembered = process_inline_command(user_text)
-            if is_command:
-                async for event in self._remember_response(
-                    conversation_id, provider_id, model, remembered
-                ):
-                    yield event
-                return
 
         history = await self._load_history(conversation_id)
 
@@ -868,14 +810,12 @@ class ChatEngine:
         await self.db.commit()
 
         if memory_enabled:
-            saved_queue = asyncio.Queue()
             extract_task = asyncio.create_task(
                 self._extract_memories(
                     conversation_id,
                     provider_id,
                     model,
                     memory_enabled,
-                    saved_queue,
                 )
             )
             _memory_tasks.add(extract_task)
@@ -911,16 +851,3 @@ class ChatEngine:
                 }
             ),
         }
-
-        if saved_queue is not None and extract_task is not None:
-            # Fire-and-forget: don't block the SSE response on the background
-            # memory extraction. Awaiting it here kept the stream open for
-            # seconds after `done`, which delayed the streaming->static swap.
-            # Extraction continues in _memory_tasks (own DB session); drain
-            # only what is already queued.
-            while not saved_queue.empty():
-                saved_text = saved_queue.get_nowait()
-                yield {
-                    "event": "memory_saved",
-                    "data": json.dumps({"text": saved_text, "count": 1}),
-                }
