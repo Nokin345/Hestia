@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Send, Square, Sparkles, Brain, Globe, Terminal, X, FileText, AlertTriangle } from 'lucide-react'
-import { apiFetch, apiPatch, apiDelete, apiUpload } from '../api/client'
+import { apiFetch, apiPatch, apiDelete, apiPost, apiUpload } from '../api/client'
 import { streamChat } from '../api/stream'
 import { readLastModels, writeLastModels } from '../persist'
 import type { ChatEventData, KbSource, RetrievedMemory } from '../api/stream'
@@ -739,11 +739,26 @@ export default function ChatPage() {
       const files = Array.from(e.target.files ?? [])
       e.target.value = ''
       if (!files.length) return
+      let convoId = conversationId
+      try {
+        // New-chat uploads need a conversation to live under (/uploads/<id>/).
+        // Create one up front so the conversation-folder deletion logic applies.
+        if (!convoId) {
+          const conv = await apiPost<Conversation>('/conversations')
+          convoId = conv.id
+          realConvIdRef.current = convoId
+          setSearchParams({ c: convoId }, { replace: true })
+          queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        }
+      } catch (err) {
+        alert((err as Error).message)
+        return
+      }
       setAttaching(true)
       const results: { url: string; mime: string; name?: string; text?: string }[] = []
       try {
         for (const file of files) {
-          const res = await apiUpload(file)
+          const res = await apiUpload(file, convoId)
           const isText = !res.mime.startsWith('image/')
           let text: string | undefined
           if (isText && file.size <= 1024 * 1024) {
@@ -758,7 +773,7 @@ export default function ChatPage() {
         setAttaching(false)
       }
     },
-    [],
+    [conversationId, setSearchParams, queryClient],
   )
 
   const removeAttachment = useCallback((url: string) => {
