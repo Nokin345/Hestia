@@ -135,6 +135,7 @@ export default function ChatPage() {
   const { data: modelEntries, isPending: modelsPending } = useQuery({
     queryKey: ['models'],
     queryFn: () => apiFetch<ModelEntry[]>('/providers/models'),
+    refetchOnWindowFocus: true,
   })
 
   const { data: defaults } = useQuery({
