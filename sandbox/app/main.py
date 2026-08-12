@@ -86,7 +86,10 @@ async def run(body: RunRequest) -> RunResult:
         kwargs = dict(
             image=RUN_IMAGE,
             detach=True,
-            remove=True,
+            # Note: NOT remove=True. Auto-removing the container on exit races
+            # with container.logs() below — fast scripts finish and get removed
+            # before we can read their output, producing "(no output)" with a
+            # correct exit code. We remove the container manually at the end.
             working_dir="/workspace",
             volumes={
                 vol.name: {"bind": "/workspace", "mode": "rw"},
