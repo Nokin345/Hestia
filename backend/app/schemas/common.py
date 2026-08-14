@@ -8,6 +8,8 @@ class MessagePart(BaseModel):
     text: str = ""
     image_url: str | None = None
     image_mime: str | None = None
+    name: str | None = None
+    url: str | None = None
 
 
 class ToolCall(BaseModel):

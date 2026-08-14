@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeHighlight from 'rehype-highlight'
 import rehypeKatex from 'rehype-katex'
-import { Check, ChevronRight, Copy, Pencil, Send, Trash2, Wrench, X } from 'lucide-react'
+import { Check, ChevronRight, Copy, Pencil, Send, Trash2, Wrench, X, FileText, ExternalLink } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { ChatUsage, Message, MessagePart } from '../../api/types'
 import type { RetrievedMemory, KbSource } from '../../api/stream'
@@ -730,6 +730,59 @@ function SenderLabel({ name, align }: { name: string; align: 'left' | 'right' })
   )
 }
 
+function DocumentChip({
+  name,
+  url,
+  text,
+}: {
+  name: string
+  url?: string | null
+  text?: string | null
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    return () => document.removeEventListener('pointerdown', onPointerDown)
+  }, [open])
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        title={text ? 'Click to expand document text' : name}
+        className="flex h-20 max-w-48 items-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-800/80 px-3 text-left transition-colors hover:border-indigo-600/50"
+      >
+        <FileText className="size-5 shrink-0 text-indigo-400" />
+        <span className="truncate text-xs text-zinc-200">{name}</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1.5 max-h-64 w-80 overflow-auto rounded-lg border border-zinc-700 bg-zinc-900/95 p-3 text-xs leading-relaxed text-zinc-300 shadow-2xl shadow-black/50 backdrop-blur">
+          {url && (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              className="mb-1.5 flex items-center gap-1.5 break-all font-medium text-indigo-300 hover:underline"
+            >
+              <ExternalLink className="size-3 shrink-0" />
+              {name}
+            </a>
+          )}
+          {text && <div className="whitespace-pre-wrap">{text}</div>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function MessageBubble({
   message,
   username,
@@ -743,18 +796,40 @@ export function MessageBubble({
 }) {
   const text = message.parts.filter((p) => p.type === 'text').map((p) => p.text ?? '').join('')
   const images = message.parts.filter((p) => p.type === 'image_url' && p.image_url)
+  const docs = message.parts.filter((p) => p.type === 'document' && (p.url || p.text))
 
   if (message.role === 'user') {
     return (
       <div className="group flex justify-end">
         <div className="flex max-w-[85%] flex-col items-end">
           <SenderLabel name={username || 'You'} align="right" />
-          <div className="w-fit rounded-2xl rounded-br-md bg-indigo-900/70 px-4 py-2.5 text-sm text-white">
-            {images.map((img, i) => (
-              <img key={i} src={img.image_url!} alt="attachment" className="mb-2 max-h-48 rounded-lg" />
-            ))}
-            {text && <div className="whitespace-pre-wrap">{text}</div>}
-          </div>
+          {(images.length > 0 || docs.length > 0) && (
+            <div className="mb-1.5 flex max-w-full flex-wrap justify-end gap-1.5">
+              {images.map((img, i) => (
+                <a
+                  key={`img-${i}`}
+                  href={img.image_url!}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="shrink-0"
+                >
+                  <img
+                    src={img.image_url!}
+                    alt="attachment"
+                    className="size-20 rounded-lg border border-zinc-700/60 object-cover transition-colors hover:border-indigo-600/50"
+                  />
+                </a>
+              ))}
+              {docs.map((d, i) => (
+                <DocumentChip key={`doc-${i}`} name={d.name || 'document'} url={d.url} text={d.text} />
+              ))}
+            </div>
+          )}
+          {text && (
+            <div className="w-fit rounded-2xl rounded-br-md bg-indigo-900/70 px-4 py-2.5 text-sm text-white">
+              <div className="whitespace-pre-wrap">{text}</div>
+            </div>
+          )}
           <ActionButtons onEdit={onEdit} onDelete={onDelete} />
         </div>
       </div>

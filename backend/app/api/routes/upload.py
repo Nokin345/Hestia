@@ -67,10 +67,24 @@ async def upload_file(
     path = upload_dir / name
     path.write_bytes(data)
 
+    # Extract real text server-side so binaries (PDFs) aren't decoded as UTF-8
+    # into gibberish. PDFs go through pypdf; plain text files are decoded.
+    from app.core.kb_ingest import extract_text
+
+    extracted = extract_text(path, mime) if not mime.startswith("image/") else ""
+    if len(extracted) > 2_000_000:
+        extracted = extracted[:2_000_000]
+
     if upload_dir == Path(settings.upload_dir):
-        return {"url": f"/uploads/{name}", "mime": mime, "size": len(data)}
+        return {
+            "url": f"/uploads/{name}",
+            "mime": mime,
+            "size": len(data),
+            "text": extracted,
+        }
     return {
         "url": f"/uploads/{conversation_id}/{name}",
         "mime": mime,
         "size": len(data),
+        "text": extracted,
     }

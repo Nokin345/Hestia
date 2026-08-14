@@ -36,6 +36,7 @@ export interface UploadResult {
   url: string
   mime: string
   size: number
+  text?: string
 }
 
 export async function apiUpload(
