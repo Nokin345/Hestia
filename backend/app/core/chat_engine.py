@@ -538,18 +538,17 @@ class ChatEngine:
             total = abs(total)
             off_label = f"UTC{sign}{total // 3600:02d}:{total % 3600 // 60:02d}"
         system += (
-            f"\n\nCurrent time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')} "
-            f"({now.strftime('%A')}).\n"
+            f"\n\nCurrent date: {now.strftime('%Y-%m-%d')} ({now.strftime('%A')}).\n"
             f"Current location: {city} (timezone {tz}, {off_label})."
         )
         memories_snapshot: list[dict[str, Any]] | None = None
+        memory_context = ""
+        rag_content = ""
         if memory_enabled:
             memories = await select_memories_for_query(self.db, user_text)
             memory_context = format_memory_context(
                 [m for m, _ in memories]
             )
-            if memory_context:
-                system += f"\n\n{memory_context}"
             if memories:
                 memories_snapshot = [
                     {
@@ -600,7 +599,6 @@ class ChatEngine:
                     )
                     if len(rag_content) > 10000:
                         rag_content = rag_content[:10000] + "\n[Truncated]"
-                    system += f"\n\n{rag_content}"
                     yield {
                         "event": "kb_retrieved",
                         "data": json.dumps(
@@ -645,6 +643,21 @@ class ChatEngine:
         provider_usage: dict[str, Any] = {}
         generation_started: float | None = None
         any_tool_used = False
+
+        # Dynamic retrieval (memories, RAG) goes at the END of the prompt, not in
+        # the system block, so the prefix [static system + prior turns] stays
+        # identical between requests and llama.cpp can reuse its KV cache. Only
+        # the latest user turn + this tail changes per request.
+        tail_blocks = [memory_context, rag_content]
+        if any(tail_blocks):
+            for msg in reversed(provider_messages):
+                if msg.role == "user":
+                    msg.parts.append(
+                        MessagePart(
+                            text="\n\n".join(b for b in tail_blocks if b)
+                        )
+                    )
+                    break
 
         while True:
             iter_parts: list[MessagePart] = []
