@@ -17,7 +17,13 @@ async def list_memories(db: AsyncSession = Depends(get_db)):
 async def create_memory(
     body: MemoryCreate, db: AsyncSession = Depends(get_db)
 ):
-    mem = await memory_service.create_memory(db, body, source="manual")
+    try:
+        mem = await memory_service.create_memory(db, body, source="manual")
+    except memory_service.PinLimitExceeded:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Maximum of 10 pinned memories",
+        )
     if mem is None:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Memory text cannot be empty")
     return mem
@@ -32,7 +38,13 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
 async def patch_memory(
     memory_id: str, body: MemoryPatch, db: AsyncSession = Depends(get_db)
 ):
-    mem = await memory_service.update_memory(db, memory_id, body)
+    try:
+        mem = await memory_service.update_memory(db, memory_id, body)
+    except memory_service.PinLimitExceeded:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Maximum of 10 pinned memories",
+        )
     if mem is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found")
     return mem

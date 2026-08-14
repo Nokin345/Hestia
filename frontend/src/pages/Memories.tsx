@@ -22,13 +22,17 @@ const SOURCE_LABELS: Record<Memory['source'], string> = {
   auto: 'auto',
 }
 
+const MAX_PINNED = 10
+
 function ActionMenu({
   pinned,
+  pinDisabled,
   onPin,
   onEdit,
   onDelete,
 }: {
   pinned: boolean
+  pinDisabled?: boolean
   onPin: () => void
   onEdit: () => void
   onDelete: () => void
@@ -73,7 +77,9 @@ function ActionMenu({
           <button
             type="button"
             onClick={run(onPin)}
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-800"
+            disabled={pinDisabled}
+            title={pinDisabled ? `Maximum of ${MAX_PINNED} pinned memories` : undefined}
+            className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Pin className={`size-4 ${pinned ? 'text-indigo-400' : 'text-zinc-400'}`} />
             {pinned ? 'Unpin' : 'Pin'}
@@ -125,6 +131,9 @@ export default function MemoriesPage() {
   const [managing, setManaging] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirmTargets, setConfirmTargets] = useState<string[] | null>(null)
+
+  const pinnedCount = (memories ?? []).filter((m) => m.pinned).length
+  const pinsFull = pinnedCount >= MAX_PINNED
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ['memories'] })
@@ -190,8 +199,17 @@ export default function MemoriesPage() {
   }
 
   const togglePin = async (m: Memory) => {
-    await apiPatch<Memory>(`/memories/${m.id}`, { pinned: !m.pinned })
-    invalidate()
+    if (!m.pinned && pinsFull) {
+      setError(`Maximum of ${MAX_PINNED} pinned memories`)
+      return
+    }
+    try {
+      await apiPatch<Memory>(`/memories/${m.id}`, { pinned: !m.pinned })
+      setError('')
+      invalidate()
+    } catch (e) {
+      setError((e as Error).message)
+    }
   }
 
   return (
@@ -265,10 +283,19 @@ export default function MemoriesPage() {
                 <input
                   type="checkbox"
                   checked={pinned}
-                  onChange={(e) => setPinned(e.target.checked)}
-                  className="size-4 accent-indigo-600"
+                  disabled={!pinned && pinsFull}
+                  onChange={(e) => {
+                    setPinned(e.target.checked)
+                    setError('')
+                  }}
+                  className="size-4 accent-indigo-600 disabled:cursor-not-allowed"
                 />
                 Pin (always included in context)
+                {!pinned && pinsFull && (
+                  <span className="text-xs text-amber-400">
+                    max {MAX_PINNED} reached
+                  </span>
+                )}
               </label>
             </div>
 
@@ -320,6 +347,11 @@ export default function MemoriesPage() {
                   {memories.length}
                 </span>
               ) : null}
+              {memories && pinnedCount > 0 && (
+                <span className="ml-2 font-normal normal-case text-indigo-400">
+                  {pinnedCount}/{MAX_PINNED} pinned
+                </span>
+              )}
             </h2>
             {memories && memories.length > 0 && (
               <button
@@ -407,6 +439,7 @@ export default function MemoriesPage() {
                   </div>
                   <ActionMenu
                     pinned={m.pinned}
+                    pinDisabled={!m.pinned && pinsFull}
                     onPin={() => void togglePin(m)}
                     onEdit={() => {
                       setEditingId(m.id)

@@ -152,6 +152,8 @@ async def create_memory(
     if dup is not None:
         return dup
     category = data.category if data.category in MEMORY_CATEGORIES else "fact"
+    if data.pinned and await count_pinned_memories(db) >= MAX_PINNED_MEMORIES:
+        raise PinLimitExceeded()
     mem = Memory(
         text=text,
         category=category,
@@ -179,6 +181,9 @@ async def update_memory(
     if data.category is not None and data.category in MEMORY_CATEGORIES:
         mem.category = data.category
     if data.pinned is not None:
+        if data.pinned and not mem.pinned:
+            if await count_pinned_memories(db) >= MAX_PINNED_MEMORIES:
+                raise PinLimitExceeded()
         mem.pinned = data.pinned
     await db.commit()
     await db.refresh(mem)
@@ -294,32 +299,18 @@ async def _vector_scores(db: AsyncSession, query: str, k: int) -> dict[str, floa
         return {}
 
 
-_PINNED_CORE_LIMIT = 5
+_PINNED_CORE_LIMIT = 10
+MAX_PINNED_MEMORIES = 10
 
 
-def _is_core_memory(mem: Memory) -> bool:
-    """Return whether a pinned memory is safe to keep globally available.
+async def count_pinned_memories(db: AsyncSession) -> int:
+    stmt = select(func.count(Memory.id)).where(Memory.pinned.is_(True))
+    result = await db.execute(stmt)
+    return result.scalar() or 0
 
-    Mirrors odysseus: only identity/contact pinned memories are always
-    injected; non-core pinned memories must match the query.
-    """
-    category = (mem.category or "").lower()
-    if category in {"identity", "contact"}:
-        return True
-    text = (mem.text or "").lower()
-    return any(
-        marker in text
-        for marker in (
-            "my name is",
-            "name is",
-            "call me",
-            "i am ",
-            "i'm ",
-            "email",
-            "phone",
-            "address",
-        )
-    )
+
+class PinLimitExceeded(Exception):
+    pass
 
 
 async def hybrid_retrieve(
@@ -424,13 +415,13 @@ async def hybrid_retrieve(
 
 
 async def select_memories_for_query(
-    db: AsyncSession, query: str, max_memories: int = 8
+    db: AsyncSession, query: str, max_memories: int = 15
 ) -> list[tuple[Memory, str]]:
-    """Combine always-on core memories with query retrieval.
+    """Combine user-pinned memories with query retrieval.
 
-    Only core identity/contact memories (pinned or identity category) are
-    always injected; other pinned memories must match the query. Mirrors
-    odysseus's pinned-vs-retrieved split to avoid leaking unrelated context.
+    Only memories explicitly pinned by the user are always injected; everything
+    else must match the query. Pinned memories are user-decided (via the UI),
+    never inferred from category or text.
 
     Returns ``(memory, type)`` pairs where ``type`` is ``"pinned"`` for
     always-on memories and ``"recalled"`` for query-retrieved ones.
@@ -440,8 +431,8 @@ async def select_memories_for_query(
         return []
     selected: list[tuple[Memory, str]] = []
     seen: set[str] = set()
-    core = [m for m in all_mems if _is_core_memory(m)]
-    for m in core[:_PINNED_CORE_LIMIT]:
+    pinned = [m for m in all_mems if m.pinned]
+    for m in pinned[:_PINNED_CORE_LIMIT]:
         selected.append((m, "pinned"))
         seen.add(m.id)
     for m in await hybrid_retrieve(db, query, k=5):
