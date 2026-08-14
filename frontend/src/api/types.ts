@@ -152,6 +152,8 @@ export interface MessagePart {
   text?: string
   image_url?: string | null
   image_mime?: string | null
+  name?: string | null
+  url?: string | null
 }
 
 export interface ChatUsage {

@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Send, Square, Sparkles, Brain, Globe, Terminal, X, FileText, AlertTriangle } from 'lucide-react'
+import { Send, Square, Sparkles, Brain, Globe, Terminal, X, FileText, AlertTriangle, Plus } from 'lucide-react'
 import { apiFetch, apiPatch, apiDelete, apiPost, apiUpload } from '../api/client'
 import { streamChat } from '../api/stream'
 import { readLastModels, writeLastModels } from '../persist'
@@ -22,13 +22,13 @@ interface ActiveMessage extends Message {
 
 type Attachment = { url: string; mime: string; name?: string; text?: string }
 
-function attachmentParts(attachments: Attachment[]): { type: string; text?: string; image_url?: string; image_mime?: string }[] {
-  const parts: { type: string; text?: string; image_url?: string; image_mime?: string }[] = []
+function attachmentParts(attachments: Attachment[]): { type: string; text?: string; image_url?: string; image_mime?: string; name?: string; url?: string }[] {
+  const parts: { type: string; text?: string; image_url?: string; image_mime?: string; name?: string; url?: string }[] = []
   for (const a of attachments) {
     if (a.mime.startsWith('image/')) {
       parts.push({ type: 'image_url', image_url: a.url, image_mime: a.mime })
-    } else if (a.text) {
-      parts.push({ type: 'text', text: `[Attachment: ${a.name ?? a.url}]\n${a.text}` })
+    } else {
+      parts.push({ type: 'document', url: a.url, name: a.name ?? a.url, text: a.text })
     }
   }
   return parts
@@ -68,6 +68,7 @@ export default function ChatPage() {
     { url: string; mime: string; name?: string; text?: string }[]
   >([])
   const [attaching, setAttaching] = useState(false)
+  const [dragging, setDragging] = useState(false)
   const attachInputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -550,6 +551,7 @@ export default function ChatPage() {
         temp: true,
       }
       setMessages((prev) => [...prev, tempUser, tempAssistant])
+      setAttachments([])
       setStreaming(true)
       aiIdRef.current = tempAssistant.id
 
@@ -576,7 +578,6 @@ export default function ChatPage() {
           handleStreamEvent(),
           controller.signal,
         )
-        setAttachments([])
       } catch (err) {
         if ((err as Error).name !== 'AbortError') {
           setMessages((prev) =>
@@ -723,10 +724,8 @@ export default function ChatPage() {
     attachInputRef.current?.click()
   }, [])
 
-  const handleAttachChange = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const files = Array.from(e.target.files ?? [])
-      e.target.value = ''
+  const uploadFiles = useCallback(
+    async (files: File[]) => {
       if (!files.length) return
       let convoId = conversationId
       try {
@@ -748,12 +747,7 @@ export default function ChatPage() {
       try {
         for (const file of files) {
           const res = await apiUpload(file, convoId)
-          const isText = !res.mime.startsWith('image/')
-          let text: string | undefined
-          if (isText && file.size <= 1024 * 1024) {
-            text = await file.text()
-          }
-          results.push({ url: res.url, mime: res.mime, name: file.name, text })
+          results.push({ url: res.url, mime: res.mime, name: file.name, text: res.text })
         }
         setAttachments((prev) => [...prev, ...results])
       } catch (err) {
@@ -763,6 +757,45 @@ export default function ChatPage() {
       }
     },
     [conversationId, setSearchParams, queryClient],
+  )
+
+  const handleAttachChange = useCallback(
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = Array.from(e.target.files ?? [])
+      e.target.value = ''
+      await uploadFiles(files)
+    },
+    [uploadFiles],
+  )
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault()
+      setDragging(false)
+      const files = Array.from(e.dataTransfer.files ?? [])
+      void uploadFiles(files)
+    },
+    [uploadFiles],
+  )
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    setDragging(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return
+    setDragging(false)
+  }, [])
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = Array.from(e.clipboardData?.files ?? [])
+      if (!files.length) return
+      e.preventDefault()
+      void uploadFiles(files)
+    },
+    [uploadFiles],
   )
 
   const removeAttachment = useCallback((url: string) => {
@@ -901,7 +934,43 @@ export default function ChatPage() {
         </div>
 
         <div className="border-t border-zinc-800 bg-zinc-950/80 backdrop-blur">
-          <div className="relative mx-auto max-w-3xl px-4 py-3">
+            <div className="relative mx-auto max-w-3xl px-4 py-3">
+              {attachments.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {attachments.map((a) =>
+                    a.mime.startsWith('image/') ? (
+                      <div key={a.url} className="group relative">
+                        <img
+                          src={a.url}
+                          alt="attachment"
+                          className="size-16 rounded-lg border border-zinc-700 object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(a.url)}
+                          className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-zinc-300 opacity-0 transition-opacity group-hover:opacity-100"
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </div>
+                    ) : (
+                      <div key={a.url} className="group relative">
+                        <div className="flex h-16 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-xs text-zinc-300">
+                          <FileText className="size-4 shrink-0 text-indigo-400" />
+                          <span className="max-w-32 truncate">{a.name}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(a.url)}
+                          className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-zinc-300 opacity-0 transition-opacity group-hover:opacity-100"
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </div>
+                    ),
+                  )}
+                </div>
+              )}
             <div className="mb-2 flex items-center gap-2">
               <div className="flex items-center gap-2">
                 <ComposerMenu
@@ -992,44 +1061,21 @@ export default function ChatPage() {
               </div>
             )}
 
-            {attachments.length > 0 && (
-              <div className="mb-2 flex flex-wrap gap-2">
-                {attachments.map((a) =>
-                  a.mime.startsWith('image/') ? (
-                    <div key={a.url} className="group relative">
-                      <img
-                        src={a.url}
-                        alt="attachment"
-                        className="size-16 rounded-lg border border-zinc-700 object-cover"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => removeAttachment(a.url)}
-                        className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-zinc-300 opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        <X className="size-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div key={a.url} className="group relative">
-                      <div className="flex h-16 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-xs text-zinc-300">
-                        <FileText className="size-4 shrink-0 text-indigo-400" />
-                        <span className="max-w-32 truncate">{a.name}</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => removeAttachment(a.url)}
-                        className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-zinc-300 opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        <X className="size-3" />
-                      </button>
-                    </div>
-                  ),
-                )}
-              </div>
-            )}
-
-            <div className="flex items-end gap-2 rounded-2xl border border-zinc-700 bg-zinc-900 p-2 focus-within:border-indigo-600 focus-within:ring-2 focus-within:ring-indigo-600/20">
+            <div
+              className={`relative flex items-end gap-2 rounded-2xl border bg-zinc-900 p-2 focus-within:border-indigo-600 focus-within:ring-2 focus-within:ring-indigo-600/20 ${
+                dragging ? 'border-indigo-500 ring-2 ring-indigo-500/30' : 'border-zinc-700'
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              {dragging && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-2xl border-2 border-dashed border-indigo-400 bg-indigo-950/70">
+                  <span className="flex items-center gap-2 text-sm font-medium text-indigo-200">
+                    <Plus className="size-4" /> Drop to attach
+                  </span>
+                </div>
+              )}
               <input
                 ref={attachInputRef}
                 type="file"
@@ -1042,6 +1088,7 @@ export default function ChatPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
+                onPaste={handlePaste}
                 rows={Math.min(6, Math.max(1, input.split('\n').length))}
                 placeholder="Message…"
                 className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
