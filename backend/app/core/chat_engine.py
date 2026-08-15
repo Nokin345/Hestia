@@ -68,9 +68,11 @@ _SEARCH_TOOLS: list[dict[str, Any]] = [
 _CODE_TOOL: dict[str, Any] = {
     "name": "run_code",
     "description": (
-        "Execute Python code and return its printed output. The code runs in a "
-        "sandboxed, network-isolated Linux container (Python 3.12). Files written "
-        "under /workspace persist across calls within this conversation.\n\n"
+        "Execute code and return its printed output. The code runs in a "
+        "network-isolated sandbox with pre-installed Python, Node.js, Go, and "
+        "Java runtimes. Each run is a fresh, stateless environment: nothing "
+        "persists between calls, so put everything you need in a single "
+        "program.\n\n"
         "USE THIS TOOL for any calculation or numeric work: complex arithmetic, "
         "multiplication/division of large numbers, probability and statistics, "
         "data processing, string/date manipulation, or any computation where a "
@@ -83,12 +85,22 @@ _CODE_TOOL: dict[str, Any] = {
     "parameters": {
         "type": "object",
         "properties": {
+            "language": {
+                "type": "string",
+                "enum": ["python", "java", "node", "go"],
+                "description": "Which runtime to execute the code with. "
+                "python: saved as main.py, run with python3. "
+                "java: expects a public class Main, saved as Main.java, "
+                "compiled with javac and run. "
+                "node: saved as main.js, run with node (JavaScript). "
+                "go: saved as main.go, run with go run. "
+                "Default: python.",
+            },
             "code": {
                 "type": "string",
-                "description": "The full Python 3 program to execute. It is saved as "
-                "main.py in /workspace and run with python3 main.py. Print the "
-                "result with print() so it is returned to you.",
-            }
+                "description": "The full program to execute in the chosen "
+                "language. Print/println the result so it is returned to you.",
+            },
         },
         "required": ["code"],
     },
@@ -390,29 +402,52 @@ class ChatEngine:
             code = str(args.get("code") or "").strip()
             if not code:
                 return False, "run_code: missing 'code' argument"
+            language = str(args.get("language") or "python").strip().lower()
+            if language == "node":
+                language = "javascript"
+            if language not in ("python", "java", "javascript", "go"):
+                language = "python"
+            filename = {
+                "python": "main.py",
+                "javascript": "main.js",
+                "go": "main.go",
+                "java": "Main.java",
+            }[language]
             try:
                 import httpx
 
-                url = f"{self.settings.code_exec_url}/api/run"
-                data = {"code": code, "conversation_id": conversation_id}
+                url = f"{self.settings.piston_url}/api/v2/execute"
+                payload = {
+                    "language": language,
+                    "version": "*",
+                    "files": [{"name": filename, "content": code.replace("\r\n", "\n")}],
+                    "run_timeout": 60_000,
+                    "compile_timeout": 60_000,
+                    "run_memory_limit": 512 * 1024 * 1024,
+                }
                 res = await asyncio.wait_for(
-                    httpx.AsyncClient(timeout=300).post(url, json=data), timeout=300
+                    httpx.AsyncClient(timeout=300).post(url, json=payload), timeout=300
                 )
                 if res.status_code != 200:
                     detail = ""
                     try:
-                        detail = res.json().get("detail", "")
+                        detail = res.json().get("message", "")
                     except Exception:
                         pass
                     return False, (
-                        f"run_code: sandbox error"
+                        f"run_code: piston error"
                         + (f": {detail}" if detail else f" (HTTP {res.status_code})")
                     )
                 result = res.json()
-                stdout = str(result.get("stdout") or "")
-                stderr = str(result.get("stderr") or "")
-                timed_out = bool(result.get("timed_out"))
-                exit_code = int(result.get("exit_code") or 0)
+                run = result.get("run") or {}
+                compile_ = result.get("compile") or {}
+                stdout = str(run.get("stdout") or "") + str(compile_.get("stdout") or "")
+                stderr = str(run.get("stderr") or "")
+                if compile_.get("stderr"):
+                    stderr = f"{compile_.get('stderr')}\n{stderr}".strip()
+                exit_code = int(run.get("code") or 0)
+                status = run.get("status")
+                timed_out = status in ("TO", "SG")
                 combined = stdout + (f"\n{stderr}" if stderr else "")
                 if not combined:
                     combined = "(no output)"

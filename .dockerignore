@@ -1,0 +1,6 @@
+data/
+uploads/
+piston/
+.git/
+*.md
+.env
