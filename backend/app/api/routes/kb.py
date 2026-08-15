@@ -60,7 +60,16 @@ async def upload_kb_document(
     path = kb_dir / stored_name
     path.write_bytes(data)
 
-    text = extract_text(path, mime)
+    from app.core.kb_ingest import extract_text
+    from app.core.ocr import build_ocr_client
+    from app.core.ocr_config import load_ocr_config
+
+    ocr, ocr_backend = None, ""
+    if mime == "application/pdf":
+        ocr_cfg = await load_ocr_config(db)
+        ocr, ocr_backend = build_ocr_client(ocr_cfg)
+
+    text = extract_text(path, mime, ocr=ocr, ocr_backend=ocr_backend)
     chunks = split_chunks(text)
 
     doc = KbDocument(
