@@ -277,7 +277,7 @@ export function DefaultsSettings() {
             checked={code}
             onChange={() => setCode(!code)}
             label="Code runner"
-            description="Run Python code in a sandbox for calculations and tasks."
+            description="Run code (Python, Node.js, Go, Java) in a sandbox for calculations and tasks."
             icon={<Code2 className="size-4 text-amber-400" />}
             color=""
           />

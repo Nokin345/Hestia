@@ -80,6 +80,15 @@ function formatToolInput(name: string, args: string): string {
   return prettyJson(args)
 }
 
+// run_code may pass a language arg (defaults to python) — surface it as a
+// small note on the tool chip.
+function runCodeLanguage(name: string, args: string): string | null {
+  if (name !== 'run_code') return null
+  const obj = parseArgsObject(args)
+  const lang = obj?.language
+  return typeof lang === 'string' && lang ? lang : null
+}
+
 // New format: "<name> | ok|failed\nA<len>\n<args_json>\nC<len>\n<body_json>"
 // Old format: "<name> | ok | <args...>\n---\n<content>"
 //
@@ -428,6 +437,11 @@ function ToolChip({
       <span className={`truncate font-medium ${active ? '' : 'text-indigo-400/80'}`}>
         {tool}
       </span>
+      {runCodeLanguage(block.name, block.args) && (
+        <span className="shrink-0 rounded bg-amber-500/15 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-400">
+          {runCodeLanguage(block.name, block.args)}
+        </span>
+      )}
       {pending ? (
         <span className="inline-flex shrink-0 gap-0.5">
           <span className="size-1 animate-pulse rounded-full bg-indigo-400" />

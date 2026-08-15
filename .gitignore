@@ -19,6 +19,10 @@ frontend/dist/
 # Uploads
 uploads/
 
+# Runtime data (bind mounts)
+data/
+piston/packages/
+
 # Backups
 .snapshots/
 

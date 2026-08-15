@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronDown, Search, CheckSquare, Square, RefreshCw, Trash2, Pencil, Check, X, Plug, Server, KeyRound, Plus, Loader2, AlertTriangle, Save } from 'lucide-react'
+import { ChevronDown, Search, CheckSquare, Square, RefreshCw, Trash2, Pencil, Check, X, Plug, Server, KeyRound, Plus, Loader2, AlertTriangle, Save, Settings } from 'lucide-react'
 import { apiDelete, apiFetch, apiPatch, apiPost } from '../api/client'
 import type { DefaultsConfig, Provider, ProviderModel, ProviderTestResult, ModelEntry } from '../api/types'
 import { PROVIDER_TYPES } from '../api/types'
@@ -357,10 +357,17 @@ export default function SettingsPage() {
   return (
     <Layout>
       <div className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto px-4 py-8">
-        <h1 className="text-xl font-semibold text-zinc-100">Settings</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Manage models. Open a provider to pick which of its models are allowed in chat.
-        </p>
+        <div className="flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-indigo-700/20">
+            <Settings className="size-5 text-indigo-300" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold text-zinc-100">Settings</h1>
+            <p className="mt-0.5 text-sm text-zinc-500">
+              Manage models. Open a provider to pick which of its models are allowed in chat.
+            </p>
+          </div>
+        </div>
 
         <div className="mt-6">
           <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">Defaults</h2>

@@ -14,7 +14,6 @@ from app.api.routes import kb as kb_router
 from app.api.routes import mcp as mcp_router
 from app.api.routes import memories as memories_router
 from app.api.routes import providers as providers_router
-from app.api.routes import sandbox as sandbox_router
 from app.api.routes import defaults as defaults_router
 from app.api.routes import search as search_router
 from app.api.routes import upload as upload_router
@@ -99,7 +98,6 @@ def create_app() -> FastAPI:
     app.include_router(memories_router.router)
     app.include_router(chat_router.router)
     app.include_router(providers_router.router)
-    app.include_router(sandbox_router.router)
     app.include_router(search_router.router)
     app.include_router(upload_router.router)
 

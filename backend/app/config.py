@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     auth_password: str = "change-me"
 
     searxng_url: str = "http://searxng:8080"
-    code_exec_url: str = "http://sandbox:8000"
+    piston_url: str = "http://piston:2000"
 
     embedding_url: str = ""
     embedding_model: str = ""

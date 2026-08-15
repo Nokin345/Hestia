@@ -184,14 +184,18 @@ export function McpPage() {
   return (
     <Layout>
       <div className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
-        <div className="flex items-center gap-2">
-          <PlugZap className="size-5 text-indigo-400" />
-          <h1 className="text-lg font-semibold text-zinc-100">MCP Servers</h1>
+        <div className="flex items-center gap-3">
+          <div className="flex size-9 items-center justify-center rounded-lg bg-indigo-700/20">
+            <PlugZap className="size-5 text-indigo-300" />
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold text-zinc-100">MCP Servers</h1>
+            <p className="mt-0.5 text-sm text-zinc-500">
+              Connect Model Context Protocol servers to give the assistant access to external tools.
+              Their tools appear in chat prefixed with the server name.
+            </p>
+          </div>
         </div>
-        <p className="mt-1 text-sm text-zinc-500">
-          Connect Model Context Protocol servers to give the assistant access to external tools.
-          Their tools appear in chat prefixed with the server name.
-        </p>
 
         {notice && <p className="mt-3 text-sm text-emerald-400">{notice}</p>}
         {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
