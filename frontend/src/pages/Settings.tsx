@@ -8,6 +8,7 @@ import { Layout } from '../components/layout/Layout'
 import { Button, Input } from '../components/ui'
 import { SearchSettings } from '../components/settings/SearchSettings'
 import { EmbeddingSettings } from '../components/settings/EmbeddingSettings'
+import { OcrSettings } from '../components/settings/OcrSettings'
 import { DefaultsSettings } from '../components/settings/DefaultsSettings'
 
 export default function SettingsPage() {
@@ -777,6 +778,7 @@ export default function SettingsPage() {
         </div>
 
         <EmbeddingSettings />
+        <OcrSettings />
 
         <div className="mt-6">
           <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">Web</h2>

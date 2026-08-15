@@ -68,10 +68,15 @@ async def upload_file(
     path.write_bytes(data)
 
     # Extract real text server-side so binaries (PDFs) aren't decoded as UTF-8
-    # into gibberish. PDFs go through pypdf; plain text files are decoded.
+    # into gibberish. PDFs go through pypdf (with OCR fallback for scanned
+    # pages); plain text files are decoded.
     from app.core.kb_ingest import extract_text
+    from app.core.ocr import load_ocr_from_settings
 
-    extracted = extract_text(path, mime) if not mime.startswith("image/") else ""
+    ocr, ocr_backend = None, ""
+    if mime == "application/pdf":
+        ocr, ocr_backend = load_ocr_from_settings(settings)
+    extracted = extract_text(path, mime, ocr=ocr, ocr_backend=ocr_backend) if not mime.startswith("image/") else ""
     if len(extracted) > 2_000_000:
         extracted = extracted[:2_000_000]
 

@@ -203,6 +203,21 @@ export interface EmbeddingConfig {
   has_api_key: boolean
 }
 
+export interface OcrConfig {
+  url: string
+  model: string
+  has_api_key: boolean
+}
+
+export interface OcrTestResult {
+  ok: boolean
+  message: string
+  backend: string
+  model: string
+  fallback: boolean
+  remote_reachable: boolean | null
+}
+
 export interface EmbeddingTestResult {
   ok: boolean
   message: string

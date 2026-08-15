@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     embedding_model: str = ""
     embedding_api_key: str = ""
 
+    ocr_url: str = ""
+    ocr_model: str = ""
+    ocr_api_key: str = ""
+
     max_tool_iterations: int = 8
 
     @property
