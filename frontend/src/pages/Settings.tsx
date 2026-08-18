@@ -7,7 +7,6 @@ import { PROVIDER_TYPES } from '../api/types'
 import { Layout } from '../components/layout/Layout'
 import { Button, Input } from '../components/ui'
 import { SearchSettings } from '../components/settings/SearchSettings'
-import { EmbeddingSettings } from '../components/settings/EmbeddingSettings'
 import { OcrSettings } from '../components/settings/OcrSettings'
 import { DefaultsSettings } from '../components/settings/DefaultsSettings'
 
@@ -777,7 +776,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <EmbeddingSettings />
         <OcrSettings />
 
         <div className="mt-6">

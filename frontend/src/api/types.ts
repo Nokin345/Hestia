@@ -197,12 +197,6 @@ export interface MemoryStats {
   categories: Record<string, number>
 }
 
-export interface EmbeddingConfig {
-  url: string
-  model: string
-  has_api_key: boolean
-}
-
 export interface OcrConfig {
   url: string
   model: string
@@ -213,17 +207,6 @@ export interface OcrTestResult {
   ok: boolean
   message: string
   backend: string
-  model: string
-  fallback: boolean
-  remote_reachable: boolean | null
-}
-
-export interface EmbeddingTestResult {
-  ok: boolean
-  message: string
-  backend: string
-  count: number
-  dimension: number | null
   model: string
   fallback: boolean
   remote_reachable: boolean | null

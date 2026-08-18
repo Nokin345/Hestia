@@ -1,49 +1,56 @@
 """ChromaDB-backed vector store for memory entries.
 
-Stores pre-computed embeddings only (SQLite is the source of truth). Best
-effort: if ChromaDB or an embedding backend is unavailable the store reports
-not healthy and retrieval degrades to keyword-only.
+Stores pre-computed embeddings. Best effort: if ChromaDB is unavailable the
+store reports not healthy and retrieval degrades gracefully.
 """
 
 import asyncio
 import logging
 
+import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.core.embedding_config import load_embedding_config
-from app.core.embedding_lanes import build_embedding_lane
+from app.core.embeddings import get_embedding_engine
 
 logger = logging.getLogger(__name__)
 
-COLLECTION_NAME = "hestia_memories"
+_COLLECTION_NAME = "hestia_memories"
+_SEMANTIC_THRESHOLD = 0.2350
+_KW_THRESHOLD = 0.12
+_TOP_K = 10
 
 
 class MemoryVectorStore:
-    """Vector index over memories for semantic retrieval."""
+    """Vector index over memories for semantic similarity filtering."""
 
-    def __init__(self, lane):
-        self._lane = lane
+    def __init__(self, engine, collection):
+        self._engine = engine
+        self._collection = collection
 
     @property
     def healthy(self) -> bool:
-        return self._lane is not None and self._lane.healthy
+        return self._collection is not None and self._engine is not None
 
     def count(self) -> int:
         if not self.healthy:
             return 0
-        return self._lane.count()
+        try:
+            return int(self._collection.count())
+        except Exception:
+            return 0
 
     def add(self, memory_id: str, text: str) -> None:
         if not self.healthy:
             return
         try:
-            existing = self._lane.collection.get(ids=[memory_id])
+            existing = self._collection.get(ids=[memory_id])
             if existing["ids"]:
                 return
-            self._lane.collection.add(
+            vecs = self._engine.encode([text])
+            self._collection.add(
                 ids=[memory_id],
-                embeddings=self._lane.encode([text]),
+                embeddings=vecs.tolist(),
                 documents=[text],
             )
         except Exception as e:
@@ -53,7 +60,7 @@ class MemoryVectorStore:
         if not self.healthy:
             return
         try:
-            self._lane.collection.delete(ids=[memory_id])
+            self._collection.delete(ids=[memory_id])
         except Exception as e:
             logger.warning("memory vector remove failed for %s: %s", memory_id, e)
 
@@ -61,21 +68,51 @@ class MemoryVectorStore:
         if not self.healthy:
             return
         try:
-            self._lane.collection.upsert(
+            vecs = self._engine.encode([text])
+            self._collection.upsert(
                 ids=[memory_id],
-                embeddings=self._lane.encode([text]),
+                embeddings=vecs.tolist(),
                 documents=[text],
             )
         except Exception as e:
             logger.warning("memory vector update failed for %s: %s", memory_id, e)
 
-    def find_similar(self, text: str, threshold: float = 0.90) -> str | None:
+    def semantic_filter(self, query: str, k: int = _TOP_K) -> list[tuple[str, float]]:
+        """Return (memory_id, cosine_similarity) pairs above threshold.
+
+        Cosine similarity via normalized dot product:
+            v_q = query_vec / norm(query_vec)
+            v_p = passage_vec / norm(passage_vec)
+            sim = dot(v_q, v_p)
+        """
+        if not self.healthy or self.count() == 0:
+            return []
+        try:
+            query_vec = self._engine.encode([query])
+            results = self._collection.query(
+                query_embeddings=query_vec.tolist(),
+                n_results=min(k, self.count()),
+                include=["distances", "embeddings"],
+            )
+            ids = results["ids"][0]
+            emb_list = results.get("embeddings", [[]])[0]
+            dists = results["distances"][0]
+
+            # ChromaDB cosine distance is 1 - cosine_similarity, so sim = 1 - dist
+            sims = [(mid, 1.0 - d) for mid, d in zip(ids, dists) if 1.0 - d >= _SEMANTIC_THRESHOLD]
+            return sims
+        except Exception as e:
+            logger.warning("semantic filter failed: %s", e)
+            return []
+
+    def find_similar(self, text: str, threshold: float = 0.85) -> str | None:
         """Return the id of the most semantically similar memory, if above threshold."""
         if not self.healthy or self.count() == 0:
             return None
         try:
-            results = self._lane.collection.query(
-                query_embeddings=self._lane.encode([text]),
+            query_vec = self._engine.encode([text])
+            results = self._collection.query(
+                query_embeddings=query_vec.tolist(),
                 n_results=1,
                 include=["distances"],
             )
@@ -87,71 +124,65 @@ class MemoryVectorStore:
             logger.warning("memory vector similarity search failed: %s", e)
         return None
 
-    def search(self, query: str, k: int = 8) -> list[tuple[str, float]]:
-        """Return (memory_id, similarity) pairs by semantic relevance."""
-        if not self.healthy or self.count() == 0:
-            return []
-        try:
-            results = self._lane.collection.query(
-                query_embeddings=self._lane.encode([query]),
-                n_results=min(k, self.count()),
-                include=["distances"],
-            )
-            ids = results["ids"][0]
-            sims = [max(0.0, 1.0 - d) for d in results["distances"][0]]
-            return list(zip(ids, sims))
-        except Exception as e:
-            logger.warning("memory vector search failed: %s", e)
-            return []
-
     def get_stats(self) -> dict:
-        if self._lane is None:
-            return {"healthy": False, "count": 0, "lane": None, "model": None, "dimension": None}
+        if not self.healthy:
+            return {
+                "healthy": False,
+                "count": 0,
+                "lane": None,
+                "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+                "dimension": 384,
+            }
         return {
-            "healthy": self.healthy,
+            "healthy": True,
             "count": self.count(),
-            "lane": self._lane.name,
-            "model": self._lane.model,
-            "dimension": self._lane.dimension,
+            "lane": self._collection.name if self._collection else None,
+            "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+            "dimension": 384,
         }
 
 
-_lane = None
+_store: MemoryVectorStore | None = None
 _lock = asyncio.Lock()
 
 
-def _config_key(cfg) -> str:
-    return "|".join([cfg.url or "", cfg.model or "", cfg.api_key or ""])
-
-
 async def get_memory_store(db: AsyncSession) -> MemoryVectorStore:
-    """Get (or build) the singleton vector store, reacting to settings changes."""
-    global _lane
+    """Get or create the singleton memory vector store."""
+    global _store
     async with _lock:
-        cfg = await load_embedding_config(db)
-        key = _config_key(cfg)
-        if _lane is not None and getattr(_lane, "_key", None) == key:
-            return MemoryVectorStore(_lane)
-
+        if _store is not None:
+            return _store
         try:
             settings = get_settings()
-            lane = build_embedding_lane(COLLECTION_NAME, cfg, settings.data_dir)
-            setattr(lane, "_key", key)
-            _lane = lane
+            cache_dir = f"{settings.data_dir}/fastembed"
+            engine = get_embedding_engine(cache_dir=cache_dir)
+            from app.core.chroma_client import get_chroma_client
+
+            chroma = get_chroma_client(settings.data_dir)
+            try:
+                collection = chroma.get_collection(_COLLECTION_NAME)
+            except Exception:
+                logger.info(
+                    "Creating memory Chroma collection %s (dim=%d)",
+                    _COLLECTION_NAME,
+                    engine.get_dimension(),
+                )
+                collection = chroma.get_or_create_collection(
+                    name=_COLLECTION_NAME,
+                    metadata={"hnsw:space": "cosine"},
+                )
+            _store = MemoryVectorStore(engine, collection)
         except Exception as e:
             logger.warning("Memory vector store init failed: %s", e)
-            _lane = None
-        store = MemoryVectorStore(_lane)
-        if store.healthy:
-            await _backfill(db, store)
-        return store
+            _store = MemoryVectorStore(None, None)
+        return _store
 
 
 async def _backfill(db: AsyncSession, store: MemoryVectorStore) -> None:
     """Index any memories missing from the vector store (best effort)."""
     indexed = set()
     try:
-        results = store._lane.collection.get(include=[])
+        results = store._collection.get(include=[])
         indexed = set(results["ids"])
     except Exception:
         pass
@@ -168,5 +199,5 @@ async def _backfill(db: AsyncSession, store: MemoryVectorStore) -> None:
 
 
 def reset_memory_store() -> None:
-    global _lane
-    _lane = None
+    global _store
+    _store = None

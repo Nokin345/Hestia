@@ -26,10 +26,6 @@ class Settings(BaseSettings):
     searxng_url: str = "http://searxng:8080"
     piston_url: str = "http://piston:2000"
 
-    embedding_url: str = ""
-    embedding_model: str = ""
-    embedding_api_key: str = ""
-
     ocr_url: str = ""
     ocr_model: str = ""
     ocr_api_key: str = ""

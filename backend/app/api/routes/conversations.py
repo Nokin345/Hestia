@@ -281,7 +281,7 @@ async def regenerate_after(
             conversation_id,
             conv.provider,
             conv.model,
-            [],
+            [MessagePart(type="text", text=content)],
             save_user=False,
             reasoning=body.reasoning if body.reasoning is not None else conv.reasoning_enabled,
             search=body.search if body.search is not None else conv.search_enabled,

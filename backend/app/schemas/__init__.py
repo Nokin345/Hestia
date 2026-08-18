@@ -16,12 +16,7 @@ from app.schemas.conversation import (
     MessageOut,
     MessagePartOut,
 )
-from app.schemas.embedding import (
-    EmbeddingConfigOut,
-    EmbeddingConfigUpdate,
-    EmbeddingStatsOut,
-    EmbeddingTestResult,
-)
+from app.schemas.embedding import EmbeddingStatsOut
 from app.schemas.memory import (
     MEMORY_CATEGORIES,
     MemoryCreate,
@@ -51,10 +46,7 @@ __all__ = [
     "ConversationPatch",
     "DeltaEvent",
     "DoneEvent",
-    "EmbeddingConfigOut",
-    "EmbeddingConfigUpdate",
     "EmbeddingStatsOut",
-    "EmbeddingTestResult",
     "ErrorEvent",
     "LoginRequest",
     "LogoutResponse",
