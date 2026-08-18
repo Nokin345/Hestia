@@ -9,9 +9,9 @@ A self-hosted, local-first AI chat assistant with retrieval-augmented generation
 - **Knowledge base (RAG)** — upload documents (PDF, Markdown, plain text, CSV, JSON, XML) into a per-document knowledge base; enable KB retrieval per conversation to ground answers in your own content.
 - **Long-term memory** — the assistant auto-extracts and stores facts, preferences, and user details between conversations, retrieves the relevant ones, and can recall memories on demand.
 - **Web search** — SearXNG-backed search with DuckDuckGo fallback, including page content fetching as context.
-- **Sandboxed code execution** — Python 3.12 in an ephemeral, network-isolated Docker container. The model can run code for precise calculations; files written under `/workspace` persist within a conversation.
+- **Sandboxed code execution** — Stateless [Piston](https://github.com/engineer-man/piston) container supporting Python, Node.js, Go, Java. Network-isolated by default.
 - **MCP tool servers** — connect external MCP servers (HTTP transport) and the model can call their tools; toggled per conversation.
-- **Semantic embeddings** — local `fastembed` (ONNX, zero-config) or an OpenAI-compatible remote endpoint (llama.cpp, vLLM, Ollama, GPUStack); used for both KB and memory retrieval.
+- **Local embeddings** — `fastembed` ONNX models (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` for memory, `jina-reranker-v2-base-multilingual` for reranking); used for both KB and memory retrieval.
 - **Per-conversation toggles** — independently enable/disable KB, memory, web search, code execution, and reasoning for each chat.
 - **System prompt presets & defaults** — set a default model and default conversation toggles.
 
@@ -30,7 +30,7 @@ If your Ollama/llama.cpp server runs on another machine (e.g. a GPU box on your 
 
 ## Quick start (self-hosted)
 
-Requirements: Docker with Docker Compose, and the `docker` socket exposed to the sandbox service for isolated code execution.
+Requirements: Docker with Docker Compose.
 
 ```bash
 git clone https://github.com/Nokin345/Hestia.git
@@ -52,16 +52,13 @@ Open http://localhost:8080 and log in with the credentials from `.env`. Defaults
 
 > `localhost` inside the Hestia container refers to the container itself. If your model server runs on the host or another machine, use its host IP or a Docker-network name (e.g. `http://192.168.1.10:11434`).
 
-### Optional: embeddings and search
+### Optional: search
 
-The SearXNG URL and embedding URL in `.env` are auto-provisioned exactly as if entered in Settings. They do not disable fallbacks — DuckDuckGo is used if SearXNG is unset or unreachable, and local fastembed (CPU) is used if no embedding URL is set or the remote endpoint fails.
+The SearXNG URL in `.env` is optional. DuckDuckGo is used if SearXNG is unset or unreachable.
 
 ```bash
 # .env
 SEARXNG_URL=http://your-searxng-host:8080
-EMBEDDING_URL=http://your-embed-server:8080/v1/embeddings   # llama.cpp, vLLM, Ollama, GPUStack
-EMBEDDING_MODEL=your-embedding-model
-EMBEDDING_API_KEY=
 ```
 
 ### Configuration (`docker-compose.yml` / `.env`)
@@ -73,13 +70,10 @@ EMBEDDING_API_KEY=
 | `APP_SECRET` | — | Signing key for session cookies; use a long random string |
 | `TZ` | `UTC` | Timezone injected into the system prompt |
 | `SEARXNG_URL` | empty | Optional SearXNG instance for web search |
-| `EMBEDDING_URL` | empty | Optional remote embeddings endpoint (OpenAI-compatible) |
-| `EMBEDDING_MODEL` | empty | Remote embedding model; server default if empty |
-| `EMBEDDING_API_KEY` | empty | Bearer token for the remote embeddings endpoint |
 
 ### Persistent data
 
-- **Database, Chroma vectors, and fastembed cache** live under `/app/data` in the named volume `backend_data` (created automatically).
+- **Database, Chroma vectors, and fastembed cache** live under `./data` (bind-mounted into the container).
 - **Uploads** are stored on the host at `./uploads` (configurable via `UPLOAD_DIR`).
 - **Sandbox workspaces** live in per-conversation Docker volumes (`hestia-sandbox-*`, created automatically), so executed files and their outputs persist across turns in the same conversation.
 
@@ -94,9 +88,8 @@ docker run --rm -v hestia_backend_data:/data -v "$PWD":/backup alpine \
 1. **Providers** — add an Ollama or llama.cpp provider (local-first), or OpenRouter / any OpenAI-compatible endpoint. The model picker lists each provider's models.
 2. **Defaults** — set the default model and default conversation toggles.
 3. **Search** — SearXNG URL, max results, DuckDuckGo fallback, page fetching.
-4. **Memory embeddings** — remote endpoint + model, or leave empty for local fastembed.
-5. **System prompts** — manage presets and the applied default system prompt.
-6. **MCP** — add HTTP MCP servers; tools appear in new conversations.
+4. **System prompts** — manage presets and the applied default system prompt.
+5. **MCP** — add HTTP MCP servers; tools appear in new conversations.
 
 ## Development
 
