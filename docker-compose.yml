@@ -12,9 +12,6 @@ services:
       - TZ=${TZ:-UTC}
       - PISTON_URL=http://piston:2000
       - SEARXNG_URL=${SEARXNG_URL:-}
-      - EMBEDDING_URL=${EMBEDDING_URL:-}
-      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
-      - EMBEDDING_API_KEY=${EMBEDDING_API_KEY:-}
     volumes:
       - ./data:/app/data
       - ${UPLOAD_DIR:-./uploads}:/app/uploads
