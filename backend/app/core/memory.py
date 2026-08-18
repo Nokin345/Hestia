@@ -305,19 +305,25 @@ async def hybrid_retrieve(
     """Retrieve memories relevant to the query.
 
     Pipeline:
-      1. Semantic filter (e5-small ChromaDB cosine >= 0.7568, top-k=10)
-      2. Keyword filter (BM25 >= 0.12, top-k=10)
-      3. Union of both, dedup by ID
-      4. Rerank union with jina-reranker, filter >= -2.6711
-      5. Final score = reranker score + recency tiebreak (0.05 weight)
+      1. Exclude pinned memories (always injected separately)
+      2. Semantic filter (top-10, cosine ≥ 0.2350)
+      3. Keyword filter (top-10, BM25 ≥ 0.12)
+      4. Union of both candidate sets
+      5. If union > 5, rerank by relevance and take top-5
+      6. If union ≤ 5, return all without reranking
     """
     if not query.strip():
         return []
-    memories = await list_memories(db)
-    if not memories:
+    all_mems = await list_memories(db)
+    if not all_mems:
         return []
 
-    # --- Step 1: Semantic filter (ChromaDB pre-vectorized) ---
+    # Exclude pinned memories from retrieval (they are always injected)
+    pool = [m for m in all_mems if not m.pinned]
+    if not pool:
+        return []
+
+    # --- Step 2: Semantic filter (ChromaDB pre-vectorized) ---
     semantic_ids: set[str] = set()
     try:
         from app.core.memory_vector import get_memory_store
@@ -326,36 +332,33 @@ async def hybrid_retrieve(
         if store.healthy:
             semantic_hits = store.semantic_filter(query, k=10)
             semantic_ids = {mid for mid, _ in semantic_hits}
-            logger.debug("semantic filter: %d / %d", len(semantic_ids), len(memories))
+            logger.debug("semantic filter: %d / %d", len(semantic_ids), len(pool))
     except Exception:
         pass
 
-    # --- Step 2: Keyword filter (BM25 on all memories) ---
+    # --- Step 3: Keyword filter (BM25 on pool) ---
     query_tokens = set(_content_words(query))
     if not query_tokens:
-        # No content words to match — nothing to do via keyword either
         if not semantic_ids:
             return []
 
     keyword_ids: set[str] = set()
     if query_tokens:
-        n = len(memories)
+        n = len(pool)
         doc_freq: dict[str, int] = {}
         mem_tokens: dict[str, set[str]] = {}
-        for m in memories:
+        for m in pool:
             toks = tokenize(m.text)
             mem_tokens[m.id] = toks
             for t in toks:
                 doc_freq[t] = doc_freq.get(t, 0) + 1
 
-        now = time.time()
         kw_candidates: list[tuple[float, Memory]] = []
-        for m in memories:
+        for m in pool:
             kw_raw = _bm25_score(query_tokens, mem_tokens[m.id], doc_freq, n)
             kw_norm = min(kw_raw / 6.0, 1.0) if kw_raw > 0 else 0.0
 
             mem_lower = m.text.lower()
-            # Category-aware boost
             boost = 1.0
             qtype = _query_type(query)
             if qtype == "identity":
@@ -368,7 +371,6 @@ async def hybrid_retrieve(
                 boost = 1.3
             kw_norm = min(kw_norm * boost, 1.0)
 
-            # Exact phrase/substring match
             if query.lower() in m.text.lower():
                 kw_norm = max(kw_norm, 0.8)
 
@@ -378,46 +380,35 @@ async def hybrid_retrieve(
         kw_candidates.sort(key=lambda x: x[0], reverse=True)
         keyword_ids = {m.id for _, m in kw_candidates[:10]}
 
-    # --- Step 3: Union, dedup, map ID → Memory ---
+    # --- Step 4: Union, dedup ---
     union_ids = semantic_ids | keyword_ids
-    by_id = {m.id: m for m in memories if m.id in union_ids}
+    by_id = {m.id: m for m in pool if m.id in union_ids}
     if not by_id:
         return []
-    # Only keep IDs that actually exist in by_id (best-effort)
     present_ids = [mid for mid in union_ids if mid in by_id]
-    union_docs = [by_id[mid].text for mid in present_ids]
 
-    # --- Step 4: Rerank ---
-    reranked: list[tuple[str, float]] = []
+    # --- Step 5/6: Rerank if union > 5, otherwise return as-is ---
+    if len(present_ids) <= 5:
+        return [by_id[mid] for mid in present_ids]
+
+    # Rerank union by relevance
+    reranked: list[str] = []
     try:
         from app.config import get_settings
         from app.core.embeddings import get_reranker_engine
 
         cache_dir = f"{get_settings().data_dir}/fastembed"
         reranker = get_reranker_engine(cache_dir=cache_dir)
+        union_docs = [by_id[mid].text for mid in present_ids]
         scores = reranker.rerank(query, union_docs)
-        reranked = [(mid, score) for mid, score in zip(present_ids, scores) if score >= -2.6711]
-        reranked.sort(key=lambda x: x[1], reverse=True)
-        logger.debug("reranker: %d / %d passed threshold", len(reranked), len(present_ids))
+        indexed = sorted(zip(present_ids, scores), key=lambda x: x[1], reverse=True)
+        reranked = [mid for mid, _ in indexed]
+        logger.debug("reranked %d candidates", len(reranked))
     except Exception as e:
-        logger.warning("Reranker failed (%s), falling back to reranked union order", e)
-        reranked = [(mid, 1.0) for mid in present_ids]
+        logger.warning("Reranker failed (%s), using union order", e)
+        reranked = present_ids
 
-    # --- Step 5: Final score + recency tiebreak ---
-    now = time.time()
-    score_rows: list[tuple[float, Memory]] = []
-    for mid, rerank_score in reranked:
-        m = by_id[mid]
-        days_old = max(
-            (now - (m.updated_at.timestamp() if m.updated_at else now)) / 86400,
-            0,
-        )
-        recency = 1.0 / (1.0 + days_old * 0.05)
-        final = rerank_score + 0.05 * recency
-        score_rows.append((final, m))
-
-    score_rows.sort(key=lambda x: x[0], reverse=True)
-    return [m for _, m in score_rows[:k]]
+    return [by_id[mid] for mid in reranked[:k]]
 
 
 async def select_memories_for_query(
