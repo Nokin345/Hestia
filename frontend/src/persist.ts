@@ -6,7 +6,7 @@ const PERSIST_BUSTER = 'hestia-v1'
 const MODELS_SNAPSHOT_KEY = 'hestia:lastModels'
 
 // Persist only cheap GET queries that are safe to hydrate from cache: provider
-// lists, conversations, memory stats and search/embedding config. Model lists
+// lists, conversations, memory stats and search config. Model lists
 // are intentionally excluded — they mirror live provider state, so restoring a
 // stale snapshot would keep removed models visible across reloads.
 function shouldPersist(key: unknown): boolean {
@@ -18,7 +18,6 @@ function shouldPersist(key: unknown): boolean {
     first === 'memories' ||
     first === 'memory-stats' ||
     first === 'search-config' ||
-    first === 'embedding-config' ||
     first === 'embedding-stats'
   )
 }

@@ -285,20 +285,6 @@ def _bm25_score(query_tokens: set[str], mem_tokens: set[str], df: dict[str, int]
     return score
 
 
-async def _vector_scores(db: AsyncSession, query: str, k: int) -> dict[str, float]:
-    """Return ``{memory_id: similarity}`` from the semantic store (empty if not healthy)."""
-    try:
-        from app.core.memory_vector import get_memory_store
-
-        store = await get_memory_store(db)
-        if not store.healthy:
-            return {}
-        hits = store.search(query, k=k)
-        return {mid: sim for mid, sim in hits}
-    except Exception:
-        return {}
-
-
 _PINNED_CORE_LIMIT = 10
 MAX_PINNED_MEMORIES = 10
 
@@ -314,14 +300,16 @@ class PinLimitExceeded(Exception):
 
 
 async def hybrid_retrieve(
-    db: AsyncSession, query: str, k: int = 5, threshold: float = 0.12
+    db: AsyncSession, query: str, k: int = 5
 ) -> list[Memory]:
     """Retrieve memories relevant to the query.
 
-    Blends semantic vector similarity with BM25 keyword similarity and a small
-    recency tiebreak (0.55 vector + 0.40 keyword + 0.05 recency, real
-    relevance gate). Falls back to keyword-only scoring when the vector store
-    is unhealthy.
+    Pipeline:
+      1. Semantic filter (e5-small ChromaDB cosine >= 0.7568, top-k=10)
+      2. Keyword filter (BM25 >= 0.12, top-k=10)
+      3. Union of both, dedup by ID
+      4. Rerank union with jina-reranker, filter >= -2.6711
+      5. Final score = reranker score + recency tiebreak (0.05 weight)
     """
     if not query.strip():
         return []
@@ -329,86 +317,104 @@ async def hybrid_retrieve(
     if not memories:
         return []
 
-    query_lower = query.lower()
-    qtype = _query_type(query)
-    query_tokens = set(_content_words(query))
-
-    has_vector = False
+    # --- Step 1: Semantic filter (ChromaDB pre-vectorized) ---
+    semantic_ids: set[str] = set()
     try:
         from app.core.memory_vector import get_memory_store
 
         store = await get_memory_store(db)
-        has_vector = store.healthy
+        if store.healthy:
+            semantic_hits = store.semantic_filter(query, k=10)
+            semantic_ids = {mid for mid, _ in semantic_hits}
+            logger.debug("semantic filter: %d / %d", len(semantic_ids), len(memories))
     except Exception:
-        has_vector = False
+        pass
 
+    # --- Step 2: Keyword filter (BM25 on all memories) ---
+    query_tokens = set(_content_words(query))
     if not query_tokens:
-        # No meaningful content words (e.g. "hi", "hello what's up") →
-        # nothing real to match. For pure ASCII greetings there is no signal;
-        # only fall back to vector when the query carries non-Latin content
-        # (e.g. Chinese) that the ASCII tokenizer cannot see.
-        if not has_vector or not re.search(r"[^\x00-\x7f]", query):
+        # No content words to match — nothing to do via keyword either
+        if not semantic_ids:
             return []
-        hits = await _vector_scores(db, query, k=k)
-        if hits:
-            by_id = {m.id: m for m in memories}
-            ranked = sorted(hits, key=hits.get, reverse=True)[:k]
-            return [by_id[mid] for mid in ranked if mid in by_id]
 
-    # BM25 IDF over the corpus
-    n = len(memories)
-    doc_freq: dict[str, int] = {}
-    mem_tokens: dict[str, set[str]] = {}
-    for m in memories:
-        toks = tokenize(m.text)
-        mem_tokens[m.id] = toks
-        for t in toks:
-            doc_freq[t] = doc_freq.get(t, 0) + 1
+    keyword_ids: set[str] = set()
+    if query_tokens:
+        n = len(memories)
+        doc_freq: dict[str, int] = {}
+        mem_tokens: dict[str, set[str]] = {}
+        for m in memories:
+            toks = tokenize(m.text)
+            mem_tokens[m.id] = toks
+            for t in toks:
+                doc_freq[t] = doc_freq.get(t, 0) + 1
 
-    vector_scores = await _vector_scores(db, query, k=k * 3) if has_vector else {}
-    if has_vector and vector_scores:
-        logger.debug("vector store %s / corpus %s memories", len(vector_scores), n)
+        now = time.time()
+        kw_candidates: list[tuple[float, Memory]] = []
+        for m in memories:
+            kw_raw = _bm25_score(query_tokens, mem_tokens[m.id], doc_freq, n)
+            kw_norm = min(kw_raw / 6.0, 1.0) if kw_raw > 0 else 0.0
 
+            mem_lower = m.text.lower()
+            # Category-aware boost
+            boost = 1.0
+            qtype = _query_type(query)
+            if qtype == "identity":
+                boost = 1.4 if _is_identity_memory(m) else boost
+            elif qtype == "contact" and any(w in mem_lower for w in ["@", ".com", "phone", "number", "address", "http", "www", "tel:"]):
+                boost = 1.3
+            elif qtype == "preference" and any(w in mem_lower for w in ["like", "love", "hate", "dislike", "prefer", "favorite", "enjoy", "interested"]):
+                boost = 1.3
+            elif qtype == "task" and any(w in mem_lower for w in ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline", "need to"]):
+                boost = 1.3
+            kw_norm = min(kw_norm * boost, 1.0)
+
+            # Exact phrase/substring match
+            if query.lower() in m.text.lower():
+                kw_norm = max(kw_norm, 0.8)
+
+            if kw_norm >= 0.12:
+                kw_candidates.append((kw_norm, m))
+
+        kw_candidates.sort(key=lambda x: x[0], reverse=True)
+        keyword_ids = {m.id for _, m in kw_candidates[:10]}
+
+    # --- Step 3: Union, dedup, map ID → Memory ---
+    union_ids = semantic_ids | keyword_ids
+    by_id = {m.id: m for m in memories if m.id in union_ids}
+    if not by_id:
+        return []
+    # Only keep IDs that actually exist in by_id (best-effort)
+    present_ids = [mid for mid in union_ids if mid in by_id]
+    union_docs = [by_id[mid].text for mid in present_ids]
+
+    # --- Step 4: Rerank ---
+    reranked: list[tuple[str, float]] = []
+    try:
+        from app.config import get_settings
+        from app.core.embeddings import get_reranker_engine
+
+        cache_dir = f"{get_settings().data_dir}/fastembed"
+        reranker = get_reranker_engine(cache_dir=cache_dir)
+        scores = reranker.rerank(query, union_docs)
+        reranked = [(mid, score) for mid, score in zip(present_ids, scores) if score >= -2.6711]
+        reranked.sort(key=lambda x: x[1], reverse=True)
+        logger.debug("reranker: %d / %d passed threshold", len(reranked), len(present_ids))
+    except Exception as e:
+        logger.warning("Reranker failed (%s), falling back to reranked union order", e)
+        reranked = [(mid, 1.0) for mid in present_ids]
+
+    # --- Step 5: Final score + recency tiebreak ---
     now = time.time()
     score_rows: list[tuple[float, Memory]] = []
-
-    for m in memories:
-        vs = vector_scores.get(m.id, 0.0) if has_vector else 0.0
-        kw_raw = _bm25_score(query_tokens, mem_tokens[m.id], doc_freq, n)
-        kw_norm = min(kw_raw / 6.0, 1.0) if kw_raw > 0 else 0.0
-
-        mem_lower = m.text.lower()
-        # Category-aware boost (identity/contact/preference/task)
-        boost = 1.0
-        if qtype == "identity":
-            boost = 1.4 if _is_identity_memory(m) else boost
-        elif qtype == "contact" and any(w in mem_lower for w in ["@", ".com", "phone", "number", "address", "http", "www", "tel:"]):
-            boost = 1.3
-        elif qtype == "preference" and any(w in mem_lower for w in ["like", "love", "hate", "dislike", "prefer", "favorite", "enjoy", "interested"]):
-            boost = 1.3
-        elif qtype == "task" and any(w in mem_lower for w in ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline", "need to"]):
-            boost = 1.3
-        kw_norm = min(kw_norm * boost, 1.0)
-
-        # Exact phrase/substring match stays a strong signal
-        if query_lower in m.text.lower():
-            kw_norm = max(kw_norm, 0.8)
-
-        days_old = max((now - (m.updated_at.timestamp() if m.updated_at else now)) / 86400, 0)
+    for mid, rerank_score in reranked:
+        m = by_id[mid]
+        days_old = max(
+            (now - (m.updated_at.timestamp() if m.updated_at else now)) / 86400,
+            0,
+        )
         recency = 1.0 / (1.0 + days_old * 0.05)
-
-        # Gate: require real relevance, not just recency
-        if has_vector:
-            if vs < 0.20 and kw_norm < 0.08:
-                continue
-            final = (0.55 * vs) + (0.40 * kw_norm) + (0.05 * recency)
-        else:
-            if kw_norm < 0.08:
-                continue
-            final = (0.95 * kw_norm) + (0.05 * recency)
-
-        if final >= threshold:
-            score_rows.append((final, m))
+        final = rerank_score + 0.05 * recency
+        score_rows.append((final, m))
 
     score_rows.sort(key=lambda x: x[0], reverse=True)
     return [m for _, m in score_rows[:k]]

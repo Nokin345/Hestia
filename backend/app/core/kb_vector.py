@@ -1,7 +1,7 @@
 """ChromaDB-backed vector store for the global knowledge base.
 
 Chunks of uploaded KB documents are embedded and stored in a dedicated
-ChromD collection (``hestia_kb``). Best effort: if ChromaDB or an embedding
+Chroma collection (``hestia_kb``). Best effort: if ChromaDB or an embedding
 backend is unavailable the store reports not healthy and KB search degrades
 to a no-op (empty results).
 """
@@ -12,7 +12,6 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.core.embedding_config import load_embedding_config
 from app.core.embedding_lanes import build_embedding_lane
 
 logger = logging.getLogger(__name__)
@@ -121,13 +120,13 @@ class KbVectorStore:
 
     def get_stats(self) -> dict:
         if self._lane is None:
-            return {"healthy": False, "count": 0, "lane": None, "model": None, "dimension": None}
+            return {"healthy": False, "count": 0, "lane": None, "model": "intfloat/multilingual-e5-small", "dimension": 384}
         return {
             "healthy": self.healthy,
             "count": self.count(),
             "lane": self._lane.name,
-            "model": self._lane.model,
-            "dimension": self._lane.dimension,
+            "model": "intfloat/multilingual-e5-small",
+            "dimension": 384,
         }
 
 
@@ -135,23 +134,15 @@ _lane = None
 _lock = asyncio.Lock()
 
 
-def _config_key(cfg) -> str:
-    return "|".join([cfg.url or "", cfg.model or "", cfg.api_key or ""])
-
-
 async def get_kb_store(db: AsyncSession) -> KbVectorStore:
-    """Get (or build) the singleton KB store, reacting to settings changes."""
+    """Get or build the singleton KB store."""
     global _lane
     async with _lock:
-        cfg = await load_embedding_config(db)
-        key = _config_key(cfg)
-        if _lane is not None and getattr(_lane, "_key", None) == key:
+        if _lane is not None:
             return KbVectorStore(_lane)
-
         try:
             settings = get_settings()
-            lane = build_embedding_lane(COLLECTION_NAME, cfg, settings.data_dir)
-            setattr(lane, "_key", key)
+            lane = build_embedding_lane(COLLECTION_NAME, settings.data_dir)
             _lane = lane
         except Exception as e:
             logger.warning("KB vector store init failed: %s", e)
