@@ -16,7 +16,7 @@ from app.core.embeddings import get_embedding_engine
 logger = logging.getLogger(__name__)
 
 _COLLECTION_NAME = "hestia_memories"
-_SEMANTIC_THRESHOLD = 0.2350
+_SEMANTIC_THRESHOLD = 0.1
 _KW_THRESHOLD = 0.12
 _TOP_K = 10
 

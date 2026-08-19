@@ -42,6 +42,9 @@ def _migrate_sqlite(sync_conn) -> None:
             "model": "VARCHAR(100)",
             "memories_used": "TEXT",
         },
+        "memories": {
+            "last_recalled_at": "DATETIME",
+        },
         "kb_documents": {
             "enabled": "BOOLEAN DEFAULT 1",
         },

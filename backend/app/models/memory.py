@@ -31,3 +31,4 @@ class Memory(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TZDateTime, default=now, onupdate=now
     )
+    last_recalled_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
