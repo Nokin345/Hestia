@@ -27,6 +27,7 @@ class MemoryOut(BaseModel):
     conversation_id: str | None
     created_at: datetime
     updated_at: datetime
+    last_recalled_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

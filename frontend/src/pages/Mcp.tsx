@@ -183,7 +183,7 @@ export function McpPage() {
 
   return (
     <Layout>
-      <div className="mx-auto w-full max-w-3xl flex-1 px-4 py-6">
+      <div className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto px-4 py-6">
         <div className="flex items-center gap-3">
           <div className="flex size-9 items-center justify-center rounded-lg bg-indigo-700/20">
             <PlugZap className="size-5 text-indigo-300" />

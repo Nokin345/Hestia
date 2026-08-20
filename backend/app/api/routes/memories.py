@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import memory as memory_service
@@ -11,6 +11,16 @@ router = APIRouter(prefix="/api/memories", tags=["memories"])
 @router.get("", response_model=list[MemoryOut])
 async def list_memories(db: AsyncSession = Depends(get_db)):
     return await memory_service.list_memories(db)
+
+
+@router.get("/search", response_model=list[MemoryOut])
+async def search_memory(
+    q: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+):
+    return await memory_service.search_memories(db, q, limit=limit, offset=offset)
 
 
 @router.post("", response_model=MemoryOut)
