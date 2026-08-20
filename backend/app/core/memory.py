@@ -23,6 +23,12 @@ _MEMORY_KEYS = ("enable_memory", "memory_auto_extract")
 # the top score. Tunable — still being tested.
 RERANK_SCORE_MARGIN = 0.3
 
+# Absolute relevance floor: ignore the whole batch if even the best rerank
+# logit maps below this probability of relevance. 5% in logit space is
+# math.log(0.05 / 0.95) ≈ -2.9444. Applied to the raw reranker score, before
+# the recency bonus, so a fresh-but-irrelevant memory cannot inflate past it.
+RELEVANCE_LOGIT_FLOOR = math.log(0.05 / 0.95)
+
 # Recency bonus (logit-space tiebreak): fresh memories get a small relevance
 # bump.  RECENT_BOOST=0.05 → a just-recalled memory gets ~+5% odds
 # (~+0.0488 logit).  RECENT_DECAY=0.05/day → freshness halves every ~20 days.
@@ -418,6 +424,13 @@ async def hybrid_retrieve(
         reranker = get_reranker_engine(cache_dir=cache_dir)
         union_docs = [by_id[mid].text for mid in present_ids]
         scores = reranker.rerank(query, union_docs)
+        if scores and max(scores) < RELEVANCE_LOGIT_FLOOR:
+            logger.debug(
+                "best rerank logit %.3f below relevance floor %.3f; retrieving nothing",
+                max(scores),
+                RELEVANCE_LOGIT_FLOOR,
+            )
+            return []
         # Add recency bonus (logit-space tiebreak)
         ranked = []
         for mid, s in zip(present_ids, scores):
