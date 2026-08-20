@@ -29,6 +29,10 @@ RERANK_SCORE_MARGIN = 0.3
 # the recency bonus, so a fresh-but-irrelevant memory cannot inflate past it.
 RELEVANCE_LOGIT_FLOOR = math.log(0.05 / 0.95)
 
+# Semantic near-duplicate threshold: cosine at/above this collapses a new text
+# onto an existing memory in the vector store. Tunable — still being tested.
+SEMANTIC_DUP_THRESHOLD = 0.8
+
 # Recency bonus (logit-space tiebreak): fresh memories get a small relevance
 # bump.  RECENT_BOOST=0.05 → a just-recalled memory gets ~+5% odds
 # (~+0.0488 logit).  RECENT_DECAY=0.05/day → freshness halves every ~20 days.
@@ -143,7 +147,7 @@ async def find_duplicate(db: AsyncSession, text: str) -> Memory | None:
 
         store = await get_memory_store(db)
         if store.healthy:
-            similar_id = store.find_similar(text, threshold=0.85)
+            similar_id = store.find_similar(text, threshold=SEMANTIC_DUP_THRESHOLD)
             if similar_id:
                 mem = await get_memory(db, similar_id)
                 if mem is not None:
@@ -345,13 +349,56 @@ async def hybrid_retrieve(
     all_mems = await list_memories(db)
     if not all_mems:
         return []
-
-    # Exclude pinned memories from retrieval (they are always injected)
     pool = [m for m in all_mems if not m.pinned]
     if not pool:
         return []
 
-    # --- Step 2: Semantic filter (ChromaDB pre-vectorized) ---
+    ranked = await _ranked_union_candidates(db, query, pool)
+    if not ranked:
+        return []
+
+    # Absolute relevance floor: surface nothing if even the best candidate is
+    # below this probability of relevance.
+    if ranked[0][1] < RELEVANCE_LOGIT_FLOOR:
+        return []
+
+    best = ranked[0][1]
+    kept = [m for m, s in ranked if s > best - RERANK_SCORE_MARGIN]
+    return kept[:k]
+
+
+async def search_memories(
+    db: AsyncSession, query: str, limit: int = 50, offset: int = 0
+) -> list[Memory]:
+    """Hybrid (semantic + keyword) search over memories for the management UI.
+
+    Unlike hybrid_retrieve this does NOT apply the relevance floor or the
+    relative margin filter — it returns the top-N ranked candidates so a user
+    can browse whatever is closest, even if none clears the injection threshold.
+    """
+    if not query.strip():
+        return []
+    all_mems = await list_memories(db)
+    if not all_mems:
+        return []
+    pool = [m for m in all_mems if not m.pinned]
+    if not pool:
+        return []
+
+    ranked = await _ranked_union_candidates(db, query, pool)
+    return [m for m, _ in ranked[offset : offset + limit]]
+
+
+async def _ranked_union_candidates(
+    db: AsyncSession, query: str, pool: list[Memory]
+) -> list[tuple[Memory, float]]:
+    """Run semantic + keyword union retrieval and rerank.
+
+    Returns ``(memory, adjusted_score)`` sorted best-first, or [] when the pool
+    is empty or nothing matches. The adjusted score is the raw reranker logit
+    plus a recency bonus. Does NOT apply the relevance floor or margin filter.
+    """
+    # --- Semantic filter (ChromaDB pre-vectorized) ---
     semantic_ids: set[str] = set()
     try:
         from app.core.memory_vector import get_memory_store
@@ -364,12 +411,8 @@ async def hybrid_retrieve(
     except Exception:
         pass
 
-    # --- Step 3: Keyword filter (BM25 on pool) ---
+    # --- Keyword filter (BM25 on pool) ---
     query_tokens = set(_content_words(query))
-    if not query_tokens:
-        if not semantic_ids:
-            return []
-
     keyword_ids: set[str] = set()
     if query_tokens:
         n = len(pool)
@@ -408,14 +451,14 @@ async def hybrid_retrieve(
         kw_candidates.sort(key=lambda x: x[0], reverse=True)
         keyword_ids = {m.id for _, m in kw_candidates[:10]}
 
-    # --- Step 4: Union, dedup ---
+    # --- Union, dedup ---
     union_ids = semantic_ids | keyword_ids
     by_id = {m.id: m for m in pool if m.id in union_ids}
     if not by_id:
         return []
     present_ids = [mid for mid in union_ids if mid in by_id]
 
-    # --- Step 5/6: Always rerank, recency bonus, margin-filter, cap at k ---
+    # --- Rerank, recency bonus ---
     try:
         from app.config import get_settings
         from app.core.embeddings import get_reranker_engine
@@ -424,30 +467,16 @@ async def hybrid_retrieve(
         reranker = get_reranker_engine(cache_dir=cache_dir)
         union_docs = [by_id[mid].text for mid in present_ids]
         scores = reranker.rerank(query, union_docs)
-        if scores and max(scores) < RELEVANCE_LOGIT_FLOOR:
-            logger.debug(
-                "best rerank logit %.3f below relevance floor %.3f; retrieving nothing",
-                max(scores),
-                RELEVANCE_LOGIT_FLOOR,
-            )
-            return []
-        # Add recency bonus (logit-space tiebreak)
-        ranked = []
-        for mid, s in zip(present_ids, scores):
-            adjusted = s + _recency_bonus(by_id[mid])
-            ranked.append((mid, adjusted))
-        ranked.sort(key=lambda x: x[1], reverse=True)
+        ranked = sorted(
+            ((mid, s) for mid, s in zip(present_ids, scores)),
+            key=lambda t: t[1] + _recency_bonus(by_id[t[0]]),
+            reverse=True,
+        )
         logger.debug("reranked %d candidates", len(ranked))
+        return [(by_id[mid], score) for mid, score in ranked]
     except Exception as e:
         logger.warning("Reranker failed (%s), returning union unfiltered", e)
-        return [by_id[mid] for mid in present_ids]
-
-    if not ranked:
-        return []
-
-    best = ranked[0][1]
-    kept = [(mid, s) for mid, s in ranked if s > best - RERANK_SCORE_MARGIN]
-    return [by_id[mid] for mid, _ in kept[:k]]
+        return [(by_id[mid], 0.0) for mid in present_ids]
 
 
 async def select_memories_for_query(
