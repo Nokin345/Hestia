@@ -72,9 +72,19 @@ class RerankerEngine:
         return [float(s) for s in self._reranker.rerank(query, documents)]
 
 
+_RERANK_ENGINE: "RerankerEngine | None" = None
+_EMBED_ENGINE: "EmbeddingEngine | None" = None
+
+
 def get_embedding_engine(cache_dir: str | None = None) -> EmbeddingEngine:
-    return EmbeddingEngine(cache_dir=cache_dir)
+    global _EMBED_ENGINE
+    if _EMBED_ENGINE is None:
+        _EMBED_ENGINE = EmbeddingEngine(cache_dir=cache_dir)
+    return _EMBED_ENGINE
 
 
 def get_reranker_engine(cache_dir: str | None = None) -> RerankerEngine:
-    return RerankerEngine(cache_dir=cache_dir)
+    global _RERANK_ENGINE
+    if _RERANK_ENGINE is None:
+        _RERANK_ENGINE = RerankerEngine(cache_dir=cache_dir)
+    return _RERANK_ENGINE
