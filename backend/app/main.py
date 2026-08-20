@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -21,6 +22,9 @@ from app.api.routes import upload as upload_router
 from app.auth import current_authenticated
 from app.config import get_settings
 from app.db import init_db
+from app.core.embeddings import get_embedding_engine, get_reranker_engine
+
+logger = logging.getLogger(__name__)
 
 _PUBLIC_PATHS = {
     "/",
@@ -36,7 +40,27 @@ _PUBLIC_PATHS = {
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await _warmup_model_engine()
     yield
+
+
+async def _warmup_model_engine() -> None:
+    """Load the embedding + reranker engines once and run a probe call so the
+    first memory query does not pay the model-load cold-start cost."""
+    from app.core.embeddings import _EMBED_MODEL, _RERANK_MODEL
+
+    cache_dir = f"{get_settings().data_dir}/fastembed"
+    try:
+        reranker = get_reranker_engine(cache_dir=cache_dir)
+        reranker.rerank("warmup", ["warmup probe document"])
+        logger.info("Reranker %s warmed up", _RERANK_MODEL)
+    except Exception as e:
+        logger.warning("Reranker warm-up failed (%s); models load lazily on first query", e)
+    try:
+        get_embedding_engine(cache_dir=cache_dir).encode(["warmup probe"])
+        logger.info("Embedding %s warmed up", _EMBED_MODEL)
+    except Exception as e:
+        logger.warning("Embedding warm-up failed (%s)", e)
 
 
 def _mount_frontend(app: FastAPI, dist: Path) -> None:
