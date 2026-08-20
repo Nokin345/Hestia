@@ -24,14 +24,14 @@ _MEMORY_KEYS = ("enable_memory", "memory_auto_extract")
 RERANK_SCORE_MARGIN = 0.3
 
 # Absolute relevance floor: ignore the whole batch if even the best rerank
-# logit maps below this probability of relevance. 5% in logit space is
-# math.log(0.05 / 0.95) ≈ -2.9444. Applied to the raw reranker score, before
+# logit maps below this probability of relevance. 10% in logit space is
+# math.log(0.10 / 0.90) ≈ -2.1972. Applied to the raw reranker score, before
 # the recency bonus, so a fresh-but-irrelevant memory cannot inflate past it.
-RELEVANCE_LOGIT_FLOOR = math.log(0.05 / 0.95)
+RELEVANCE_LOGIT_FLOOR = math.log(0.10 / 0.90)
 
 # Semantic near-duplicate threshold: cosine at/above this collapses a new text
 # onto an existing memory in the vector store. Tunable — still being tested.
-SEMANTIC_DUP_THRESHOLD = 0.8
+SEMANTIC_DUP_THRESHOLD = 0.75
 
 # Recency bonus (logit-space tiebreak): fresh memories get a small relevance
 # bump.  RECENT_BOOST=0.05 → a just-recalled memory gets ~+5% odds

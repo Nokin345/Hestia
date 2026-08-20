@@ -105,7 +105,7 @@ class MemoryVectorStore:
             logger.warning("semantic filter failed: %s", e)
             return []
 
-    def find_similar(self, text: str, threshold: float = 0.85) -> str | None:
+    def find_similar(self, text: str, threshold: float = 0.75) -> str | None:
         """Return the id of the most semantically similar memory, if above threshold."""
         if not self.healthy or self.count() == 0:
             return None
