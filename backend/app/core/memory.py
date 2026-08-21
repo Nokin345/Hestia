@@ -19,36 +19,40 @@ logger = logging.getLogger(__name__)
 
 _MEMORY_KEYS = ("enable_memory", "memory_auto_extract")
 
-# Rerank margin: keep memories whose rerank score is within this distance of
-# the top score. Tunable — still being tested.
-RERANK_SCORE_MARGIN = 0.3
-
-# Absolute relevance floor: ignore the whole batch if even the best rerank
-# logit maps below this probability of relevance. 10% in logit space is
-# math.log(0.10 / 0.90) ≈ -2.1972. Applied to the raw reranker score, before
-# the recency bonus, so a fresh-but-irrelevant memory cannot inflate past it.
-RELEVANCE_LOGIT_FLOOR = math.log(0.10 / 0.90)
+# Fusion retrieval: final = VS_WEIGHT*vs + KW_WEIGHT*kw_norm + REC_WEIGHT*recency.
+# Weights sum to 1.0 so final is a bounded [0,1] relevance blend.
+FUSION_VS_WEIGHT = 0.55
+FUSION_KW_WEIGHT = 0.40
+FUSION_REC_WEIGHT = 0.05
+# Fusion relevance threshold: candidates below this fused score are not injected.
+# Tunable — governs recall vs precision on the injected memories.
+FUSION_THRESHOLD = 0.12
 
 # Semantic near-duplicate threshold: cosine at/above this collapses a new text
 # onto an existing memory in the vector store. Tunable — still being tested.
 SEMANTIC_DUP_THRESHOLD = 0.75
 
-# Recency bonus (logit-space tiebreak): fresh memories get a small relevance
-# bump.  RECENT_BOOST=0.05 → a just-recalled memory gets ~+5% odds
-# (~+0.0488 logit).  RECENT_DECAY=0.05/day → freshness halves every ~20 days.
-RECENT_BOOST = 0.05
+# Recency freshness (0..1 decay tiebreak): fresh memories score higher.
+# RECENT_DECAY=0.05/day → freshness halves every ~20 days.
 RECENT_DECAY = 0.05
-RECENT_ALPHA = math.log(1.0 + RECENT_BOOST)
 
 
-def _recency_bonus(m: Memory) -> float:
-    """Return the logit-space recency bonus for a memory."""
+def _recency_freshness(m: Memory) -> float:
+    """Freshness in (0,1]: 1.0 for brand-new memories, decaying toward 0 over time."""
     ref = m.last_recalled_at or m.created_at
     if ref is None:
         return 0.0
     days_old = max((datetime.now(UTC) - ref).total_seconds() / 86400.0, 0.0)
-    freshness = 1.0 / (1.0 + days_old * RECENT_DECAY)
-    return RECENT_ALPHA * freshness
+    return 1.0 / (1.0 + days_old * RECENT_DECAY)
+
+
+def _fused_score(vs: float, kw_norm: float, freshness: float) -> float:
+    """Bounded [0,1] relevance blend of cosine, BM25, and recency."""
+    return (
+        FUSION_VS_WEIGHT * vs
+        + FUSION_KW_WEIGHT * kw_norm
+        + FUSION_REC_WEIGHT * freshness
+    )
 
 
 def _bounded_bool(value: str | None, default: bool) -> bool:
@@ -75,14 +79,20 @@ _STOPWORDS = frozenset(
     "will would shall should can could may might must need ought dare "
     "i me my mine we us our ours you your yours he him his she her hers "
     "it its they them their theirs this that these those "
-    "and but or nor not no so if then else than too also very "
+    "and but or nor not no so if then else than too very "
     "in on at to for of by with from up out about into over after "
     "what when where which who whom how why all each every some any "
-    "just very really actually like well also still already even "
-    "oh ok okay yes yeah hey hi hello no"
-    "there here because while during before until since through between "
-    "don't doesnt didn't won't wouldn't couldn't ain't isn't it's i'll i'd "
-    "you're i'm we're they're we'll what's that's there's let's".split()
+    "just really actually like well also still already even "
+    "oh ok okay yes yeah hey hi hello thanks thank please sorry "
+    "much more most own other another such only same here there "
+    "because while during before until since through between both "
+    "few many several none nothing something anything everything "
+    "get got make made go going went come came take took "
+    "know think want let say tell give see look find way thing "
+    "don doesn didn won wouldn couldn shouldn wasn weren isn aren haven hasn "
+    "don't doesn't didn't won't wouldn't couldn't shouldn't "
+    "it's i'm i've i'll i'd you're you've you'll he's she's we're we've they're they've "
+    "that's there's here's what's who's how's let's can't".split()
 )
 
 
@@ -220,7 +230,7 @@ async def update_memory(
     await db.commit()
     await db.refresh(mem)
     if data.text is not None:
-        await _sync_vector_add(db, mem)
+        await _sync_vector_add(db, mem, replace=True)
     return mem
 
 
@@ -241,7 +251,7 @@ async def delete_memory(db: AsyncSession, memory_id: str) -> bool:
     return True
 
 
-async def _sync_vector_add(db: AsyncSession, mem: Memory) -> None:
+async def _sync_vector_add(db: AsyncSession, mem: Memory, replace: bool = False) -> None:
     try:
         from app.core.memory_vector import get_memory_store
 
@@ -249,7 +259,10 @@ async def _sync_vector_add(db: AsyncSession, mem: Memory) -> None:
             return
         store = await get_memory_store(db)
         if store.healthy:
-            store.add(mem.id, mem.text)
+            if replace:
+                store.update(mem.id, mem.text)
+            else:
+                store.add(mem.id, mem.text)
     except Exception:
         pass
 
@@ -338,11 +351,9 @@ async def hybrid_retrieve(
 
     Pipeline:
       1. Exclude pinned memories (always injected separately)
-      2. Semantic filter (top-10, cosine ≥ 0.1)
-      3. Keyword filter (top-10, BM25 ≥ 0.12)
-      4. Union of both candidate sets
-      5. Always rerank the union by relevance
-      6. Keep memories within RERANK_SCORE_MARGIN of the best score, cap at k
+      2. Semantic + keyword union, each with cosine (vs) and BM25 (kw_norm)
+      3. Fuse into a bounded relevance score; keep candidates above FUSION_THRESHOLD
+      4. Rerank survivors by cross-encoder relevance, cap at k
     """
     if not query.strip():
         return []
@@ -353,17 +364,24 @@ async def hybrid_retrieve(
     if not pool:
         return []
 
-    ranked = await _ranked_union_candidates(db, query, pool)
-    if not ranked:
+    candidates = await _union_with_scores(db, query, pool)
+    if not candidates:
         return []
 
-    # Absolute relevance floor: surface nothing if even the best candidate is
-    # below this probability of relevance.
-    if ranked[0][1] < RELEVANCE_LOGIT_FLOOR:
+    kept = [
+        mem
+        for mem, vs, kw_norm in candidates
+        if _fused_score(vs, kw_norm, _recency_freshness(mem)) > FUSION_THRESHOLD
+    ]
+    if not kept:
         return []
 
-    best = ranked[0][1]
-    kept = [m for m, s in ranked if s > best - RERANK_SCORE_MARGIN]
+    # Rerank survivors by cross-encoder relevance (ordering only; does not veto).
+    scores = await _rerank_scores(db, query, [mem.text for mem in kept])
+    if scores is not None:
+        ranked = sorted(zip(kept, scores), key=lambda t: t[1], reverse=True)
+        return [mem for mem, _ in ranked[:k]]
+    logger.warning("Reranker failed, returning fusion-kept memories")
     return kept[:k]
 
 
@@ -372,9 +390,9 @@ async def search_memories(
 ) -> list[Memory]:
     """Hybrid (semantic + keyword) search over memories for the management UI.
 
-    Unlike hybrid_retrieve this does NOT apply the relevance floor or the
-    relative margin filter — it returns the top-N ranked candidates so a user
-    can browse whatever is closest, even if none clears the injection threshold.
+    Returns the top-N union candidates ranked by cross-encoder relevance. Unlike
+    hybrid_retrieve it does NOT apply the fusion threshold — it returns whatever
+    is closest so a user can browse, even if none clears the injection threshold.
     """
     if not query.strip():
         return []
@@ -385,35 +403,71 @@ async def search_memories(
     if not pool:
         return []
 
-    ranked = await _ranked_union_candidates(db, query, pool)
-    return [m for m, _ in ranked[offset : offset + limit]]
+    candidates = await _union_with_scores(db, query, pool)
+    if not candidates:
+        return []
+
+    texts = [mem.text for mem, _, _ in candidates]
+    scores = await _rerank_scores(db, query, texts)
+    if scores is not None:
+        ranked = [mem for mem, _ in sorted(zip(candidates, scores), key=lambda t: t[1], reverse=True)]
+    else:
+        ranked = list(candidates)
+
+    return [m for m, _, _ in ranked[offset : offset + limit]]
 
 
-async def _ranked_union_candidates(
-    db: AsyncSession, query: str, pool: list[Memory]
-) -> list[tuple[Memory, float]]:
-    """Run semantic + keyword union retrieval and rerank.
+async def _rerank_scores(
+    db: AsyncSession, query: str, texts: list[str]
+) -> list[float] | None:
+    """Cross-encoder scores for a batch of texts.
 
-    Returns ``(memory, adjusted_score)`` sorted best-first, or [] when the pool
-    is empty or nothing matches. The adjusted score is the raw reranker logit
-    plus a recency bonus. Does NOT apply the relevance floor or margin filter.
+    Returns None if the reranker is unavailable, so the caller can fall back to
+    the fusion-kept order.
     """
+    if not texts:
+        return None
+    try:
+        from app.config import get_settings
+        from app.core.embeddings import get_reranker_engine
+
+        cache_dir = f"{get_settings().data_dir}/fastembed"
+        reranker = get_reranker_engine(cache_dir=cache_dir)
+        return reranker.rerank(query, texts)
+    except Exception as e:
+        logger.warning("Reranker failed (%s)", e)
+        return []
+
+
+async def _union_with_scores(
+    db: AsyncSession, query: str, pool: list[Memory]
+) -> list[tuple[Memory, float, float]]:
+    """Semantic + keyword union retrieval.
+
+    Returns ``(memory, cosine, kw_norm)`` per candidate, where cosine is the
+    vector-store similarity (vs) and kw_norm is BM25 scaled to [0,1]. A candidate
+    qualifies only when it clears an axis gate — cosine ≥ 0.1 or kw_norm ≥ 0.12.
+    Does NOT apply the fusion threshold; that gates injection in hybrid_retrieve.
+    """
+    by_id = {m.id: m for m in pool}
+    scored: dict[str, tuple[float, float]] = {}
+
     # --- Semantic filter (ChromaDB pre-vectorized) ---
-    semantic_ids: set[str] = set()
     try:
         from app.core.memory_vector import get_memory_store
 
         store = await get_memory_store(db)
         if store.healthy:
-            semantic_hits = store.semantic_filter(query, k=10)
-            semantic_ids = {mid for mid, _ in semantic_hits}
-            logger.debug("semantic filter: %d / %d", len(semantic_ids), len(pool))
+            for mid, vs in store.semantic_filter(query, k=10):
+                if mid in by_id:
+                    prev = scored.get(mid, (0.0, 0.0))
+                    scored[mid] = (vs, prev[1])
+            logger.debug("semantic filter: %d / %d", len(scored), len(pool))
     except Exception:
         pass
 
     # --- Keyword filter (BM25 on pool) ---
     query_tokens = set(_content_words(query))
-    keyword_ids: set[str] = set()
     if query_tokens:
         n = len(pool)
         doc_freq: dict[str, int] = {}
@@ -424,59 +478,38 @@ async def _ranked_union_candidates(
             for t in toks:
                 doc_freq[t] = doc_freq.get(t, 0) + 1
 
-        kw_candidates: list[tuple[float, Memory]] = []
         for m in pool:
             kw_raw = _bm25_score(query_tokens, mem_tokens[m.id], doc_freq, n)
             kw_norm = min(kw_raw / 6.0, 1.0) if kw_raw > 0 else 0.0
+            kw_norm = _keyword_boost(query, m, kw_norm)
+            if kw_norm >= 0.12 and m.id in by_id:
+                prev = scored.get(m.id, (0.0, 0.0))
+                scored[m.id] = (prev[0], kw_norm)
 
-            mem_lower = m.text.lower()
-            boost = 1.0
-            qtype = _query_type(query)
-            if qtype == "identity":
-                boost = 1.4 if _is_identity_memory(m) else boost
-            elif qtype == "contact" and any(w in mem_lower for w in ["@", ".com", "phone", "number", "address", "http", "www", "tel:"]):
-                boost = 1.3
-            elif qtype == "preference" and any(w in mem_lower for w in ["like", "love", "hate", "dislike", "prefer", "favorite", "enjoy", "interested"]):
-                boost = 1.3
-            elif qtype == "task" and any(w in mem_lower for w in ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline", "need to"]):
-                boost = 1.3
-            kw_norm = min(kw_norm * boost, 1.0)
-
-            if query.lower() in m.text.lower():
-                kw_norm = max(kw_norm, 0.8)
-
-            if kw_norm >= 0.12:
-                kw_candidates.append((kw_norm, m))
-
-        kw_candidates.sort(key=lambda x: x[0], reverse=True)
-        keyword_ids = {m.id for _, m in kw_candidates[:10]}
-
-    # --- Union, dedup ---
-    union_ids = semantic_ids | keyword_ids
-    by_id = {m.id: m for m in pool if m.id in union_ids}
-    if not by_id:
+    if not scored:
         return []
-    present_ids = [mid for mid in union_ids if mid in by_id]
+    return [(by_id[mid], vs, kw) for mid, (vs, kw) in scored.items()]
 
-    # --- Rerank, recency bonus ---
-    try:
-        from app.config import get_settings
-        from app.core.embeddings import get_reranker_engine
 
-        cache_dir = f"{get_settings().data_dir}/fastembed"
-        reranker = get_reranker_engine(cache_dir=cache_dir)
-        union_docs = [by_id[mid].text for mid in present_ids]
-        scores = reranker.rerank(query, union_docs)
-        ranked = sorted(
-            ((mid, s) for mid, s in zip(present_ids, scores)),
-            key=lambda t: t[1] + _recency_bonus(by_id[t[0]]),
-            reverse=True,
-        )
-        logger.debug("reranked %d candidates", len(ranked))
-        return [(by_id[mid], score) for mid, score in ranked]
-    except Exception as e:
-        logger.warning("Reranker failed (%s), returning union unfiltered", e)
-        return [(by_id[mid], 0.0) for mid in present_ids]
+def _keyword_boost(query: str, m: Memory, kw_norm: float) -> float:
+    """Apply query-type and exact-match boosts to a raw normalized BM25 score."""
+    mem_lower = m.text.lower()
+    boost = 1.0
+    qtype = _query_type(query)
+    if qtype == "identity":
+        boost = 1.4 if _is_identity_memory(m) else boost
+    elif qtype == "contact" and any(w in mem_lower for w in ["@", ".com", "phone", "number", "address", "http", "www", "tel:"]):
+        boost = 1.3
+    elif qtype == "preference" and any(w in mem_lower for w in ["like", "love", "hate", "dislike", "prefer", "favorite", "enjoy", "interested"]):
+        boost = 1.3
+    elif qtype == "task" and any(w in mem_lower for w in ["todo", "task", "remind", "meeting", "appointment", "schedule", "deadline", "need to"]):
+        boost = 1.3
+    kw_norm = min(kw_norm * boost, 1.0)
+
+    if query.lower() in m.text.lower():
+        kw_norm = max(kw_norm, 0.8)
+
+    return kw_norm
 
 
 async def select_memories_for_query(
