@@ -65,6 +65,40 @@ class KbVectorStore:
         except Exception as e:
             logger.warning("KB vector remove failed for %s: %s", doc_id, e)
 
+    def get_document_text(self, doc_id: str) -> str:
+        """Reconstruct the extracted text of a document from its chunks."""
+        if not self.healthy:
+            return ""
+        try:
+            res = self._lane.collection.get(
+                where={"doc_id": doc_id},
+                include=["documents", "metadatas"],
+            )
+        except Exception as e:
+            logger.warning("KB text fetch failed for %s: %s", doc_id, e)
+            return ""
+        chunks = [
+            (int(meta.get("chunk", 0)), doc or "")
+            for doc, meta in zip(res["documents"], res["metadatas"])
+        ]
+        chunks.sort(key=lambda x: x[0])
+        parts: list[str] = []
+        for _, chunk in chunks:
+            if not chunk:
+                continue
+            if not parts:
+                parts.append(chunk)
+                continue
+            prev = parts[-1]
+            # Strip the sliding-window overlap shared with the previous chunk
+            for i in range(min(len(prev), len(chunk), 500), 0, -1):
+                if chunk.startswith(prev[-i:]):
+                    parts.append(chunk[i:])
+                    break
+            else:
+                parts.append(chunk)
+        return "".join(parts)
+
     def search(
         self,
         query: str,

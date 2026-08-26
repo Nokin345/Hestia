@@ -1,23 +1,39 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, Check, Edit3, FileText, Link as LinkIcon, Loader2, Trash2, UploadCloud, X } from 'lucide-react'
+import { BookOpen, Check, Edit3, Eye, FileText, Link as LinkIcon, Loader2, Trash2, UploadCloud, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { apiDelete, apiFetch, apiPatch, apiPost } from '../api/client'
+import { streamKbUpload } from '../api/stream'
 import type { KbDocument, KbListResult } from '../api/types'
 import { Layout } from '../components/layout/Layout'
 import { Button, ConfirmDialog } from '../components/ui'
 
 const ACCEPT = '.txt,.md,.csv,.pdf,.json,.xml'
 
+interface UploadItemState {
+  filename: string
+  mime: string
+  is_pdf: boolean
+  total_pages: number
+  ocr_backend: string
+  ocr_model: string
+  current: number
+  ocr_pages: number
+}
+
 export default function KnowledgeBasesPage() {
   const queryClient = useQueryClient()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState('')
   const [uploading, setUploading] = useState(false)
+  const [uploadItem, setUploadItem] = useState<UploadItemState | null>(null)
   const [editing, setEditing] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [viewing, setViewing] = useState<KbDocument | null>(null)
+  const [viewText, setViewText] = useState('')
+  const [viewError, setViewError] = useState('')
 
   const { data, isLoading } = useQuery({
     queryKey: ['kb'],
@@ -27,29 +43,56 @@ export default function KnowledgeBasesPage() {
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['kb'] })
   const docs = data?.documents ?? []
 
+  const uploadOne = (file: File) =>
+    new Promise<void>((resolve, reject) => {
+      streamKbUpload(file, (e) => {
+        switch (e.event) {
+          case 'started':
+            setUploadItem({
+              filename: e.data.filename,
+              mime: e.data.mime,
+              is_pdf: e.data.is_pdf,
+              total_pages: e.data.total_pages,
+              ocr_backend: e.data.ocr_backend,
+              ocr_model: e.data.ocr_model,
+              current: 0,
+              ocr_pages: 0,
+            })
+            break
+          case 'progress':
+            setUploadItem((prev) =>
+              prev
+                ? { ...prev, current: e.data.current, ocr_pages: e.data.ocr_pages }
+                : prev,
+            )
+            break
+          case 'done':
+            resolve()
+            break
+          case 'error':
+            reject(new Error(e.data.message))
+            break
+        }
+      })
+        .then(resolve)
+        .catch(reject)
+    })
+
   const handleFiles = async (files: FileList | null) => {
-    if (!files || !files.length) return
+    const list = files ? Array.from(files) : []
+    if (!list.length) return
     setError('')
     setUploading(true)
     try {
-      for (const file of Array.from(files)) {
-        const form = new FormData()
-        form.append('file', file)
-        const res = await fetch('/api/kb', {
-          method: 'POST',
-          credentials: 'include',
-          body: form,
-        })
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          throw new Error((body as { detail?: string }).detail || `HTTP ${res.status}`)
-        }
+      for (const file of list) {
+        await uploadOne(file)
+        queryClient.invalidateQueries({ queryKey: ['kb'] })
       }
-      invalidate()
     } catch (err) {
       setError((err as Error).message)
     } finally {
       setUploading(false)
+      setUploadItem(null)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
@@ -71,10 +114,31 @@ export default function KnowledgeBasesPage() {
     }
   }
 
+  const openViewer = async (d: KbDocument) => {
+    setViewing(d)
+    setViewText('')
+    setViewError('')
+    try {
+      const res = await apiFetch<{ text: string }>(`/kb/${d.id}/text`)
+      setViewText(res.text)
+    } catch (e) {
+      setViewError((e as Error).message)
+    }
+  }
+
   const exitEdit = () => {
     setEditing(false)
     setSelected(new Set())
   }
+
+  useEffect(() => {
+    if (!viewing) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setViewing(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [viewing])
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -226,13 +290,58 @@ export default function KnowledgeBasesPage() {
             <p className="mt-3 flex items-center gap-2 text-sm text-zinc-500">
               <Loader2 className="size-4 animate-spin" /> Loading documents…
             </p>
-          ) : docs.length === 0 ? (
-            <p className="mt-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-3 text-sm text-zinc-400">
-              No documents indexed yet. Upload your first PDF or text file above.
-            </p>
           ) : (
             <div className="mt-3 space-y-2">
-              {docs.map((d) => (
+              {uploadItem && (
+                <div className="flex items-start gap-3 rounded-xl border border-zinc-800/60 bg-zinc-900/30 px-4 py-3">
+                  <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-zinc-800/60">
+                    <FileText className="size-4 text-zinc-500" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-zinc-400">{uploadItem.filename}</p>
+                    <div className="mt-1.5 space-y-1.5">
+                      {uploadItem.is_pdf ? (
+                        <>
+                          <p className="text-[11px] text-zinc-500">
+                            {uploadItem.current < uploadItem.total_pages
+                              ? `Processing page ${uploadItem.current} of ${uploadItem.total_pages}`
+                              : 'Finalizing…'}
+                          </p>
+                          <div className="h-1 w-full overflow-hidden rounded-full bg-zinc-800">
+                            <div
+                              className="h-full rounded-full bg-indigo-500 transition-all duration-300"
+                              style={{
+                                width: `${
+                                  uploadItem.total_pages
+                                    ? Math.min(100, (uploadItem.current / uploadItem.total_pages) * 100)
+                                    : 0
+                                }%`,
+                              }}
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <p className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+                          <Loader2 className="size-3 animate-spin" /> Processing…
+                        </p>
+                      )}
+                      {uploadItem.ocr_model && (
+                        <p className="truncate text-[11px] text-zinc-600">
+                          {uploadItem.ocr_model}
+                          {uploadItem.ocr_pages > 0 &&
+                            ` · ${uploadItem.ocr_pages} page${uploadItem.ocr_pages === 1 ? '' : 's'} via OCR`}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+              {docs.length === 0 && !uploadItem ? (
+                <p className="rounded-lg border border-zinc-800 bg-zinc-900/60 px-4 py-3 text-sm text-zinc-400">
+                  No documents indexed yet. Upload your first PDF or text file above.
+                </p>
+              ) : (
+                docs.map((d) => (
                 <div
                   key={d.id}
                   className={clsx(
@@ -302,6 +411,14 @@ export default function KnowledgeBasesPage() {
                       <LinkIcon className="size-4" />
                     </a>
                     <button
+                      type="button"
+                      onClick={() => void openViewer(d)}
+                      className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100"
+                      title="View extracted text"
+                    >
+                      <Eye className="size-4" />
+                    </button>
+                    <button
                       onClick={() => void deleteMutation.mutate(d.id)}
                       className="rounded-lg p-2 text-zinc-400 hover:bg-red-500/10 hover:text-red-400"
                       title="Delete from knowledge base"
@@ -310,7 +427,8 @@ export default function KnowledgeBasesPage() {
                     </button>
                   </div>
                 </div>
-              ))}
+                ))
+              )}
             </div>
           )}
         </div>
@@ -325,6 +443,43 @@ export default function KnowledgeBasesPage() {
           onConfirm={() => void bulk('delete')}
           onCancel={() => setConfirmBulkDelete(false)}
         />
+      )}
+
+      {viewing && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setViewing(null)} />
+          <div className="relative flex max-h-[80vh] w-full max-w-2xl flex-col rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl shadow-black/60">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="min-w-0 truncate text-sm font-medium text-zinc-100">{viewing.filename}</h3>
+              <button
+                type="button"
+                onClick={() => setViewing(null)}
+                className="rounded-lg p-1 text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                aria-label="Close"
+              >
+                <X className="size-4" />
+              </button>
+            </div>
+            <p className="mt-1 text-xs text-zinc-500">
+              Extracted text — what gets chunked and used for retrieval.
+            </p>
+            <div className="mt-3 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/60 p-4">
+              {viewError ? (
+                <p className="text-sm text-red-400">{viewError}</p>
+              ) : viewText ? (
+                <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-zinc-300">{viewText}</pre>
+              ) : (
+                <p className="flex items-center gap-2 text-sm text-zinc-500">
+                  <Loader2 className="size-4 animate-spin" /> Loading text…
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </Layout>
   )

@@ -101,6 +101,26 @@ def _ocr_pdf_page(pdf_path: str, page_index: int, ocr, ocr_backend: str) -> str:
         return ""
 
 
+def extract_pdf_page(reader, pdf_path: str | Path, page_index: int, ocr=None, ocr_backend: str = "") -> tuple[str, bool]:
+    """Extract a single PDF page. Returns ``(text, used_ocr)``.
+
+    Uses the page's text layer when present; falls back to OCR for image-only
+    pages. Operates on an already-opened ``PdfReader``.
+    """
+    page_text = ""
+    try:
+        page_text = reader.pages[page_index].extract_text() or ""
+    except Exception as e:
+        logger.warning("PDF %s page %s text extraction failed: %s", pdf_path, page_index, e)
+    used_ocr = False
+    if _non_ws_len(page_text) < _MIN_TEXT_CHARS:
+        ocr_text = _ocr_pdf_page(str(pdf_path), page_index, ocr, ocr_backend)
+        if ocr_text:
+            page_text = ocr_text
+            used_ocr = True
+    return page_text, used_ocr
+
+
 def pdf_has_text_layer(path: str | Path) -> bool:
     """True if the PDF has a usable text layer (not a scanned/image-only PDF).
 

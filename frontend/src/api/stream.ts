@@ -39,6 +39,88 @@ export interface StreamChatBody {
   temperature?: number | null
 }
 
+export type KbUploadEvent =
+  | {
+      event: 'started'
+      data: {
+        filename: string
+        mime: string
+        is_pdf: boolean
+        total_pages: number
+        ocr_backend: string
+        ocr_model: string
+      }
+    }
+  | {
+      event: 'progress'
+      data: { current: number; total: number; ocr_pages: number }
+    }
+  | {
+      event: 'done'
+      data: {
+        id: string
+        filename: string
+        mime: string
+        size: number
+        chunk_count: number
+        url: string
+        ocr_backend: string
+        ocr_model: string
+        ocr_pages: number
+      }
+    }
+  | { event: 'error'; data: { message: string } }
+
+export async function streamKbUpload(
+  file: File,
+  onEvent: (e: KbUploadEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch('/api/kb', {
+    method: 'POST',
+    credentials: 'include',
+    body: form,
+    signal,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`)
+  }
+  if (!res.body) throw new Error('No response body')
+
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+
+  const parse = (raw: string) => {
+    const eventMatch = raw.match(/^event: (.+)$/m)
+    const dataMatch = raw.match(/^data: (.+)$/m)
+    if (!dataMatch) return
+    const event = eventMatch ? eventMatch[1] : 'message'
+    let data: Record<string, unknown>
+    try {
+      data = JSON.parse(dataMatch[1])
+    } catch {
+      return
+    }
+    onEvent({ event, data } as KbUploadEvent)
+  }
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n|\r/g, '\n')
+    let idx: number
+    while ((idx = buffer.indexOf('\n\n')) !== -1) {
+      const raw = buffer.slice(0, idx)
+      buffer = buffer.slice(idx + 2)
+      if (raw.trim()) parse(raw)
+    }
+  }
+}
+
 export async function streamChat(
   body: StreamChatBody,
   onEvent: (e: ChatEventData) => void,

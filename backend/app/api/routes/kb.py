@@ -1,3 +1,6 @@
+import asyncio
+import json
+import logging
 import uuid
 from pathlib import Path
 
@@ -5,14 +8,16 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sse_starlette.sse import EventSourceResponse
 
 from app.config import get_settings
-from app.core.kb_ingest import extract_text, split_chunks
+from app.core.kb_ingest import extract_pdf_page, extract_text, split_chunks
 from app.core.kb_vector import get_kb_store
 from app.db import get_db
 from app.models import KbDocument
 
 router = APIRouter(prefix="/api/kb", tags=["kb"])
+logger = logging.getLogger(__name__)
 
 _ALLOWED_TYPES = {
     "text/plain",
@@ -31,6 +36,14 @@ class KbBulkRequest(BaseModel):
     action: str  # "enable" | "disable" | "delete"
 
 
+def _sse(event: str, data: dict) -> dict:
+    return {"event": event, "data": json.dumps(data)}
+
+
+def _err(message: str) -> list[dict]:
+    return [_sse("error", {"message": message})]
+
+
 @router.post("")
 async def upload_kb_document(
     file: UploadFile,
@@ -38,69 +51,127 @@ async def upload_kb_document(
 ):
     mime = file.content_type or "application/octet-stream"
     if mime not in _ALLOWED_TYPES:
-        raise HTTPException(status_code=415, detail=f"Unsupported file type: {mime}")
+        return EventSourceResponse(_err(f"Unsupported file type: {mime}"))
 
     data = await file.read()
     if len(data) > MAX_SIZE:
-        raise HTTPException(status_code=413, detail="File too large (max 50 MB)")
+        return EventSourceResponse(_err("File too large (max 50 MB)"))
 
     store = await get_kb_store(db)
     if not store.healthy:
-        raise HTTPException(
-            status_code=503,
-            detail="Knowledge base embedding unavailable. Enable an embedding backend in Settings.",
+        return EventSourceResponse(
+            _err("Knowledge base embedding unavailable. Enable an embedding backend in Settings.")
         )
 
     settings = get_settings()
     kb_dir = Path(settings.upload_dir) / "kb"
     kb_dir.mkdir(parents=True, exist_ok=True)
 
-    ext = Path(file.filename or "").suffix or ".bin"
+    filename = file.filename or ""
+    ext = Path(filename).suffix or ".bin"
     stored_name = f"{uuid.uuid4().hex}{ext}"
     path = kb_dir / stored_name
     path.write_bytes(data)
 
-    from app.core.kb_ingest import extract_text
-    from app.core.ocr import build_ocr_client
-    from app.core.ocr_config import load_ocr_config
+    # OCR setup (PDFs only).
+    is_pdf = mime == "application/pdf"
+    ocr, ocr_backend, ocr_model = None, "", ""
+    if is_pdf:
+        from app.core.ocr import build_ocr_client
+        from app.core.ocr_config import load_ocr_config
 
-    ocr, ocr_backend = None, ""
-    if mime == "application/pdf":
         ocr_cfg = await load_ocr_config(db)
         ocr, ocr_backend = build_ocr_client(ocr_cfg)
+        if ocr is not None:
+            ocr_model = getattr(ocr, "model", "") or ocr_cfg.model
 
-    text = extract_text(path, mime, ocr=ocr, ocr_backend=ocr_backend)
-    chunks = split_chunks(text)
+    loop = asyncio.get_running_loop()
 
-    doc = KbDocument(
-        filename=file.filename or stored_name,
-        mime=mime,
-        path=f"kb/{stored_name}",
-        chunk_count=len(chunks),
-        text_preview=chunks[0][:200] if chunks else "",
-    )
-    db.add(doc)
-    await db.commit()
-    await db.refresh(doc)
-
-    store.add_document_chunks(doc.id, chunks, doc.filename)
-    if not chunks:
-        await db.delete(doc)
-        await db.commit()
+    async def gen():
         try:
-            path.unlink()
-        except OSError:
-            pass
-        raise HTTPException(status_code=422, detail="Could not extract text from the document")
+            reader = None
+            total_pages = 0
+            if is_pdf:
+                from pypdf import PdfReader
 
-    return {
-        "id": doc.id,
-        "filename": doc.filename,
-        "mime": doc.mime,
-        "size": len(data),
-        "chunk_count": doc.chunk_count,
-        "url": f"/uploads/{doc.path}",
-    }
+                reader = PdfReader(str(path))
+                total_pages = len(reader.pages)
+
+            yield _sse(
+                "started",
+                {
+                    "filename": filename or stored_name,
+                    "mime": mime,
+                    "is_pdf": is_pdf,
+                    "total_pages": total_pages,
+                    "ocr_backend": ocr_backend,
+                    "ocr_model": ocr_model,
+                },
+            )
+
+            ocr_pages = 0
+            parts: list[str] = []
+            if is_pdf:
+                for i in range(total_pages):
+                    page_text, used_ocr = await loop.run_in_executor(
+                        None, extract_pdf_page, reader, path, i, ocr, ocr_backend
+                    )
+                    if used_ocr:
+                        ocr_pages += 1
+                    if page_text.strip():
+                        parts.append(page_text.strip())
+                    yield _sse(
+                        "progress",
+                        {"current": i + 1, "total": total_pages, "ocr_pages": ocr_pages},
+                    )
+                text = "\n\n".join(parts)
+            else:
+                text = extract_text(path, mime, ocr=None, ocr_backend="")
+                yield _sse("progress", {"current": 1, "total": 1, "ocr_pages": 0})
+
+            chunks = split_chunks(text)
+
+            doc = KbDocument(
+                filename=filename or stored_name,
+                mime=mime,
+                path=f"kb/{stored_name}",
+                chunk_count=len(chunks),
+                text_preview=chunks[0][:200] if chunks else "",
+            )
+            db.add(doc)
+            await db.commit()
+            await db.refresh(doc)
+
+            store.add_document_chunks(doc.id, chunks, doc.filename)
+            if not chunks:
+                await db.delete(doc)
+                await db.commit()
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+                yield _sse("error", {"message": "Could not extract text from the document"})
+                return
+
+            yield _sse(
+                "done",
+                {
+                    "id": doc.id,
+                    "filename": doc.filename,
+                    "mime": doc.mime,
+                    "size": len(data),
+                    "chunk_count": doc.chunk_count,
+                    "url": f"/uploads/{doc.path}",
+                    "ocr_backend": ocr_backend,
+                    "ocr_model": ocr_model,
+                    "ocr_pages": ocr_pages,
+                },
+            )
+        except Exception as e:
+            logger.warning("KB upload failed: %s", e)
+            yield _sse("error", {"message": str(e)})
+
+    return EventSourceResponse(gen())
 
 
 @router.get("")
@@ -125,6 +196,20 @@ async def list_kb_documents(db: AsyncSession = Depends(get_db)):
             for d in docs
         ],
     }
+
+
+@router.get("/{doc_id}/text")
+async def get_kb_document_text(doc_id: str, db: AsyncSession = Depends(get_db)):
+    doc = await db.get(KbDocument, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    store = await get_kb_store(db)
+    if not store.healthy:
+        raise HTTPException(
+            status_code=503,
+            detail="Knowledge base embedding unavailable. Enable an embedding backend in Settings.",
+        )
+    return {"filename": doc.filename, "text": store.get_document_text(doc_id)}
 
 
 @router.patch("/{doc_id}")
