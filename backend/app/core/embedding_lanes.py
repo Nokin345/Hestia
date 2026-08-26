@@ -37,7 +37,7 @@ class EmbeddingLane:
         return self.collection is not None and self._engine is not None
 
     def encode(self, texts: list[str]) -> list[list[float]]:
-        vecs = self._engine.encode_passages(texts)
+        vecs = self._engine.encode(texts)
         return vecs.tolist() if hasattr(vecs, "tolist") else [list(v) for v in vecs]
 
     def count(self) -> int:
