@@ -28,6 +28,12 @@ FUSION_REC_WEIGHT = 0.05
 # Tunable — governs recall vs precision on the injected memories.
 FUSION_THRESHOLD = 0.12
 
+# Cap on the query fed into retrieval. The cross-encoder's memory grows with
+# query length (attention over every query/document pair); long pastes can
+# allocate gigabytes and OOM small deployments. Embeddings read ~512 tokens
+# anyway, so nothing relevant is lost past this point.
+RETRIEVAL_QUERY_MAX_CHARS = 2000
+
 # Semantic near-duplicate threshold: cosine at/above this collapses a new text
 # onto an existing memory in the vector store. Tunable — still being tested.
 SEMANTIC_DUP_THRESHOLD = 0.75
@@ -355,6 +361,7 @@ async def hybrid_retrieve(
       3. Fuse into a bounded relevance score; keep candidates above FUSION_THRESHOLD
       4. Rerank survivors by cross-encoder relevance, cap at k
     """
+    query = query[:RETRIEVAL_QUERY_MAX_CHARS]
     if not query.strip():
         return []
     all_mems = await list_memories(db)
@@ -394,6 +401,7 @@ async def search_memories(
     hybrid_retrieve it does NOT apply the fusion threshold — it returns whatever
     is closest so a user can browse, even if none clears the injection threshold.
     """
+    query = query[:RETRIEVAL_QUERY_MAX_CHARS]
     if not query.strip():
         return []
     all_mems = await list_memories(db)
