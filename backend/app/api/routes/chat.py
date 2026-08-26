@@ -1,5 +1,6 @@
 import json
 
+from datetime import UTC, datetime
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
@@ -75,6 +76,7 @@ async def chat(body: ChatRequest, db: AsyncSession = Depends(get_db)):
             conv.system_prompt = body.system_prompt
         if body.temperature is not None:
             conv.temperature = body.temperature
+        conv.updated_at = datetime.now(UTC)
         await db.commit()
     else:
         conv = Conversation(
