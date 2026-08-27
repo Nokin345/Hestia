@@ -98,6 +98,12 @@ _STOPWORDS = frozenset(
     "don doesn didn won wouldn couldn shouldn wasn weren isn aren haven hasn "
     "don't doesn't didn't won't wouldn't couldn't shouldn't "
     "it's i'm i've i'll i'd you're you've you'll he's she's we're we've they're they've "
+    "accordingly almost anyway certainly clearly completely "
+    "exactly finally firstly furthermore generally however "
+    "indeed instead later likewise maybe meanwhile moreover never nevertheless now "
+    "nowhere otherwise perhaps quite rather regarding secondly similarly "
+    "therefore thus wherever whichever "
+    "basically literally obviously technically essentially "
     "that's there's here's what's who's how's let's can't".split()
 )
 
