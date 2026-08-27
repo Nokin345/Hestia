@@ -36,7 +36,7 @@ RETRIEVAL_QUERY_MAX_CHARS = 2000
 
 # Semantic near-duplicate threshold: cosine at/above this collapses a new text
 # onto an existing memory in the vector store. Tunable — still being tested.
-SEMANTIC_DUP_THRESHOLD = 0.75
+SEMANTIC_DUP_THRESHOLD = 0.9
 
 # Recency freshness (0..1 decay tiebreak): fresh memories score higher.
 # RECENT_DECAY=0.05/day → freshness halves every ~20 days.
@@ -596,25 +596,21 @@ def format_memory_context(memories: list[Memory]) -> str:
 # ---------------------------------------------------------------------------
 
 _EXTRACT_SYSTEM = (
-    "You are a memory extraction assistant. Analyze the conversation and extract "
-    "ONLY durable personal facts about the user that would be useful across many "
-    "future conversations.\n\n"
-    "Good examples: name, job title, city, family members, long-term projects, "
-    "explicitly stated preferences (e.g. 'I love hiking', 'I hate spicy food').\n"
-    "Bad examples: what they asked about today, temporary moods, generic "
-    "statements, things the assistant said, one-off tasks, opinions on the "
-    "current topic, topics they simply discussed or asked about.\n\n"
+    "Your task is to extract durable, certain facts about the USER from the "
+    "conversation above. Extract from the user's first message — this instruction "
+    "message is not the user. The assistant's message is context only — do not "
+    "extract facts from it.\n\n"
     "Rules:\n"
-    "- Extract every durable personal fact the user revealed (usually 2–8; "
-    "save generously)\n"
-    "- Only extract facts the USER explicitly stated — do NOT infer interests, "
-    "hobbies, or preferences from topics they simply discussed or asked about\n"
-    "- Each fact must be a single short sentence (under 15 words)\n"
-    "- If a fact is similar to something likely already known, skip it\n"
+    "- Reformulate the user's words into a clear fact about the user\n"
+    "- Use 'User' as the subject\n"
+    "- Only extract facts that are clearly stated — avoid vague or uncertain statements\n"
+    "- If the user is asking a question, return [] — questions contain no facts about the user\n"
+    "- Never extract feelings, emotions, or states of mind\n"
+    "- Don't infer interests from topics they simply discussed\n"
     "- If nothing durable was revealed, return []\n\n"
-    "Return a JSON array of objects with 'text' and 'category' fields.\n"
-    "Categories: 'identity', 'preference', 'event', 'contact', 'fact'.\n\n"
-    "Return ONLY valid JSON, no markdown fences."
+    "Return a JSON array of {\"text\": \"...\", \"category\": \"...\"}.\n"
+    "Categories: identity, preference, event, contact, fact.\n"
+    "Your response must start with `[` and end with `]`. No other text."
 )
 
 
@@ -658,28 +654,34 @@ def _parse_extraction(text: str) -> list[dict[str, str]]:
 async def extract_memories_with_model(
     provider: Provider,
     model: str,
-    conversation_text: str,
+    user_text: str,
+    assistant_text: str = "",
 ) -> list[dict[str, str]]:
-    """Ask the model to extract memories from a conversation transcript.
+    """Ask the model to extract memories from the user's message.
 
-    Mirrors odysseus's /api/memory/extract: analyze the entire conversation
-    history, pull any factual statements / contacts / addresses / phones the
-    user might want to remember, and only keep things specific and useful.
+    The assistant's message is passed as context for resolving pronouns.
+    The instructions are inlined in the user message for models that ignore system.
     """
-    if not conversation_text.strip():
+    if not user_text.strip():
         return []
-    prompt = f"Conversation history:\n{conversation_text[:12000]}\n\nExtract memories."
+    instructions = _EXTRACT_SYSTEM.strip()
+    messages: list[ChatMessage] = [
+        ChatMessage(role="user", parts=[MessagePart(text=user_text[:1800])]),
+    ]
+    if assistant_text:
+        messages.append(
+            ChatMessage(role="assistant", parts=[MessagePart(text=assistant_text[:2000])])
+        )
+    messages.append(
+        ChatMessage(role="user", parts=[MessagePart(text=instructions)])
+    )
 
     async def _attempt() -> str:
         params = ProviderCallParams(
             model=model,
             system=_EXTRACT_SYSTEM,
-            messages=[
-                ChatMessage(role="user", parts=[MessagePart(type="text", text=prompt)])
-            ],
+            messages=messages,
             tools=[],
-            # Generous budget: some models cannot reliably disable thinking, and
-            # their reasoning tokens would otherwise truncate the JSON payload.
             max_tokens=2000,
             temperature=0.2,
             reasoning=False,
@@ -697,50 +699,3 @@ async def extract_memories_with_model(
         return []
     parsed = _parse_extraction(out)
     return parsed
-
-
-_SUMMARIZE_SYSTEM = (
-    "List anything noteworthy the user revealed about themselves in concise "
-    "bullet points. Only include what the user explicitly stated. If nothing "
-    "noteworthy, return nothing."
-)
-
-
-async def summarize_noteworthy(
-    provider: Provider,
-    model: str,
-    transcript: str,
-) -> str:
-    """Ask the utility model to summarize noteworthy user facts from a short transcript.
-
-    Returns bullet points or empty string if nothing noteworthy.
-    Designed to be a cheap pre-filter before the main model extracts structured memories.
-    """
-    if not transcript.strip():
-        return ""
-    prompt = f"Conversation:\n{transcript[:4000]}\n\nList noteworthy facts."
-
-    async def _attempt() -> str:
-        params = ProviderCallParams(
-            model=model,
-            system=_SUMMARIZE_SYSTEM,
-            messages=[
-                ChatMessage(role="user", parts=[MessagePart(type="text", text=prompt)])
-            ],
-            tools=[],
-            max_tokens=1000,
-            temperature=0.1,
-            reasoning=False,
-        )
-        out = ""
-        async for event in provider.stream(params):
-            if event.kind == "text":
-                out += event.content
-        return out.strip()
-
-    try:
-        out = await _attempt()
-    except Exception as e:
-        logger.warning("noteworthy summary failed: %s", e)
-        return ""
-    return out
