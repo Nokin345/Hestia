@@ -545,7 +545,7 @@ class ChatEngine:
             url = str(args.get("url") or "").strip()
             if not url:
                 return False, "read_url: missing 'url' argument"
-            text = await fetch_url(url, cfg.max_chars_per_url)
+            text = await fetch_url(url, 20000)
             if not text:
                 return False, f"read_url: could not read {url}"
             return True, text

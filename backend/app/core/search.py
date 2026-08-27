@@ -190,25 +190,6 @@ def _classify_content_type(content_type: str) -> str:
     return "generic"
 
 
-def _old_reddit(url: str) -> str:
-    """Rewrite reddit.com/www.reddit.com links to old.reddit.com.
-
-    old.reddit renders server-side HTML that the text extractor handles well;
-    new reddit is a JS-heavy SPA that yields little readable content.
-    """
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    if host == "reddit.com" or host.endswith(".reddit.com"):
-        # old.reddit can't render new-reddit share shortlinks (/r/x/s/slug)
-        if "/s/" in parsed.path:
-            return url
-        netloc = "old.reddit.com"
-        if parsed.port:
-            netloc += f":{parsed.port}"
-        return parsed._replace(netloc=netloc).geturl()
-    return url
-
-
 async def fetch_url(url: str, max_chars: int = 4000) -> str:
     """Fetch a page and return readable content.
 
@@ -216,7 +197,6 @@ async def fetch_url(url: str, max_chars: int = 4000) -> str:
     through as fenced text. Binary/media responses return ``""``. Output is
     capped at ``max_chars``.
     """
-    url = _old_reddit(url)
     headers = {
         "User-Agent": _BROWSER_UA,
         "Accept": "text/html,application/xhtml+xml,application/json,text/plain,*/*",
