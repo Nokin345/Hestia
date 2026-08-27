@@ -212,6 +212,7 @@ function protectCurrency(raw: string): string {
   }
   let out = raw.replace(/```[\s\S]*?```/g, mask)
   out = out.replace(/`[^`]*`/g, mask)
+  out = out.replace(/\$\$[\s\S]*?\$\$/g, mask)
   out = out.replace(/\$(?=\d)/g, '\\$')
   return out.replace(/\u0000(\d+)\u0000/g, (_, i) => protectedBlocks[Number(i)])
 }
