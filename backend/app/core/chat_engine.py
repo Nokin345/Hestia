@@ -165,12 +165,6 @@ class ChatEngine:
                 provider = await get_provider(db, provider_id)
                 if provider is None:
                     return
-                reasoning = None
-                try:
-                    if await provider.supports_reasoning(model):
-                        reasoning = False
-                except Exception:
-                    reasoning = None
                 title = ""
                 async for event in provider.stream(
                     ProviderCallParams(
@@ -191,9 +185,11 @@ class ChatEngine:
                             )
                         ],
                         tools=[],
-                        max_tokens=64,
+                        # Headroom: a title needs ~30 tokens, but models that
+                        # cannot disable thinking may spend more before it.
+                        max_tokens=300,
                         temperature=0.5,
-                        reasoning=reasoning,
+                        reasoning=False,
                     )
                 ):
                     if event.kind == "text":

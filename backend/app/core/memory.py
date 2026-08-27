@@ -651,7 +651,7 @@ async def extract_memories_with_model(
         return []
     prompt = f"Conversation history:\n{conversation_text[:12000]}\n\nExtract memories."
 
-    async def _attempt(reasoning: bool | None) -> str:
+    async def _attempt() -> str:
         params = ProviderCallParams(
             model=model,
             system=_EXTRACT_SYSTEM,
@@ -659,9 +659,11 @@ async def extract_memories_with_model(
                 ChatMessage(role="user", parts=[MessagePart(type="text", text=prompt)])
             ],
             tools=[],
-            max_tokens=500,
+            # Generous budget: some models cannot reliably disable thinking, and
+            # their reasoning tokens would otherwise truncate the JSON payload.
+            max_tokens=2000,
             temperature=0.2,
-            reasoning=reasoning,
+            reasoning=False,
         )
         out = ""
         async for event in provider.stream(params):
@@ -669,24 +671,10 @@ async def extract_memories_with_model(
                 out += event.content
         return out
 
-    reasoning: bool | None = None
     try:
-        if await provider.supports_reasoning(model):
-            reasoning = False
-    except Exception:
-        reasoning = None
-
-    candidates: list[bool | None] = [reasoning]
-    if reasoning is not None:
-        candidates.append(None)
-
-    for reasoning_value in candidates:
-        try:
-            out = await _attempt(reasoning_value)
-        except Exception as e:
-            logger.warning("memory extraction failed (reasoning=%s): %s", reasoning_value, e)
-            continue
-        parsed = _parse_extraction(out)
-        if parsed:
-            return parsed
-    return []
+        out = await _attempt()
+    except Exception as e:
+        logger.warning("memory extraction failed: %s", e)
+        return []
+    parsed = _parse_extraction(out)
+    return parsed
