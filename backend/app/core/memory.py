@@ -613,15 +613,6 @@ _EXTRACT_SYSTEM = (
     "- If nothing durable was revealed, return []\n\n"
     "Return a JSON array of objects with 'text' and 'category' fields.\n"
     "Categories: 'identity', 'preference', 'event', 'contact', 'fact'.\n\n"
-    "Example format:\n"
-    "[{\"text\": \"User's name is Peter\", \"category\": \"identity\"},\n"
-    " {\"text\": \"User lives in Berlin\", \"category\": \"identity\"},\n"
-    " {\"text\": \"User is interested in hiking\", \"category\": \"preference\"},\n"
-    " {\"text\": \"User's birthday is in March\", \"category\": \"identity\"},\n"
-    " {\"text\": \"User has a cat named Whiskers\", \"category\": \"fact\"},\n"
-    " {\"text\": \"User works as a software engineer\", \"category\": \"identity\"},\n"
-    " {\"text\": \"User's email is user@example.com\", \"category\": \"contact\"},\n"
-    " {\"text\": \"User dislikes spicy food\", \"category\": \"preference\"}]\n\n"
     "Return ONLY valid JSON, no markdown fences."
 )
 
@@ -705,3 +696,50 @@ async def extract_memories_with_model(
         return []
     parsed = _parse_extraction(out)
     return parsed
+
+
+_SUMMARIZE_SYSTEM = (
+    "List anything noteworthy the user revealed about themselves in concise "
+    "bullet points. Only include what the user explicitly stated. If nothing "
+    "noteworthy, return nothing."
+)
+
+
+async def summarize_noteworthy(
+    provider: Provider,
+    model: str,
+    transcript: str,
+) -> str:
+    """Ask the utility model to summarize noteworthy user facts from a short transcript.
+
+    Returns bullet points or empty string if nothing noteworthy.
+    Designed to be a cheap pre-filter before the main model extracts structured memories.
+    """
+    if not transcript.strip():
+        return ""
+    prompt = f"Conversation:\n{transcript[:4000]}\n\nList noteworthy facts."
+
+    async def _attempt() -> str:
+        params = ProviderCallParams(
+            model=model,
+            system=_SUMMARIZE_SYSTEM,
+            messages=[
+                ChatMessage(role="user", parts=[MessagePart(type="text", text=prompt)])
+            ],
+            tools=[],
+            max_tokens=1000,
+            temperature=0.1,
+            reasoning=False,
+        )
+        out = ""
+        async for event in provider.stream(params):
+            if event.kind == "text":
+                out += event.content
+        return out.strip()
+
+    try:
+        out = await _attempt()
+    except Exception as e:
+        logger.warning("noteworthy summary failed: %s", e)
+        return ""
+    return out

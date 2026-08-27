@@ -20,6 +20,7 @@ from app.core.memory import (
     has_content_words,
     load_memory_config,
     select_memories_for_query,
+    summarize_noteworthy,
 )
 from app.core.search import fetch_url, search_and_fetch
 from app.core.search_config import load_search_config
@@ -218,21 +219,8 @@ class ChatEngine:
     def _recent_text(
         cls, history: list[ChatMessage], user_parts: list[MessagePart]
     ) -> str:
-        """Last assistant response + current user query, labeled, for the recall query."""
-        cur = "".join(p.text or "" for p in user_parts).strip()
-        last_assistant = None
-        for m in reversed(history):
-            if m.role == "assistant":
-                text = "".join(p.text or "" for p in m.parts if p.type == "text").strip()
-                if text:
-                    last_assistant = text
-                    break
-        parts: list[str] = []
-        if last_assistant:
-            parts.append(f"Assistant: {last_assistant[:1500]}")
-        if cur:
-            parts.append(f"User: {cur[:1500]}")
-        return "\n\n".join(parts)
+        """Current user query text, for the recall query."""
+        return "".join(p.text or "" for p in user_parts).strip()
 
     @classmethod
     def _recent_has_content(
@@ -301,8 +289,10 @@ class ChatEngine:
     async def _extract_memories(
         self,
         conversation_id: str,
-        provider_id: str,
-        model: str,
+        summary_provider_id: str,
+        summary_model: str,
+        extract_provider_id: str,
+        extract_model: str,
         memory_enabled: bool = True,
     ) -> None:
         try:
@@ -310,15 +300,44 @@ class ChatEngine:
                 cfg = await load_memory_config(db)
                 if not memory_enabled or not cfg["memory_auto_extract"]:
                     return
-                provider = await get_provider(db, provider_id)
-                if provider is None:
+
+                summary_provider = await get_provider(db, summary_provider_id)
+                extract_provider = await get_provider(db, extract_provider_id)
+                if summary_provider is None or extract_provider is None:
                     return
-                transcript = await self._conversation_transcript(db, conversation_id)
-                if not transcript:
-                    return
-                extracted = await extract_memories_with_model(
-                    provider, model, transcript
+
+                # Pipeline: if a separate utility model is configured, use it
+                # for a cheap summary first, then feed to the main model for
+                # structured extraction.  If both models are the same, fall
+                # back to the full transcript.
+                is_separate = (
+                    summary_provider_id != extract_provider_id
+                    or summary_model != extract_model
                 )
+                if is_separate:
+                    last_two = await self._conversation_transcript(
+                        db, conversation_id, max_messages=2, max_chars=4000
+                    )
+                    if not last_two:
+                        return
+                    summary = await summarize_noteworthy(
+                        summary_provider, summary_model, last_two
+                    )
+                    if not summary:
+                        return
+                    extracted = await extract_memories_with_model(
+                        extract_provider, extract_model, summary
+                    )
+                else:
+                    transcript = await self._conversation_transcript(
+                        db, conversation_id
+                    )
+                    if not transcript:
+                        return
+                    extracted = await extract_memories_with_model(
+                        extract_provider, extract_model, transcript
+                    )
+
                 for item in extracted:
                     if await find_duplicate(db, item["text"]) is not None:
                         continue
@@ -959,6 +978,8 @@ class ChatEngine:
                     conversation_id,
                     util_provider,
                     util_model,
+                    provider_id,
+                    model,
                     memory_enabled,
                 )
             )
