@@ -238,17 +238,16 @@ class ChatEngine:
 
     @classmethod
     def _recent_has_content(
-        cls, history: list[ChatMessage], user_parts: list[MessagePart], n: int = 6
+        cls, history: list[ChatMessage], user_parts: list[MessagePart]
     ) -> bool:
-        """True if any of the last n messages has meaningful words.
+        """True if the latest user message has meaningful words.
 
-        Checked on raw message text (no role labels) so "hi"/"ok"/"thanks"
-        correctly read as trivial and skip recall/extraction.
+        Trivial-turn guard: "hi"/"ok"/"thanks" skip recall/extraction; a
+        message with real content proceeds. Recall/extraction still use the
+        last 6 messages as context via _recent_text.
         """
-        return any(
-            has_content_words(text)
-            for _, text in cls._recent_entries(history, user_parts, n)
-        )
+        cur = "".join(p.text or "" for p in user_parts).strip()
+        return has_content_words(cur)
 
     async def _conversation_transcript(
         self, db: AsyncSession, conversation_id: str, max_messages: int = 60, max_chars: int = 12000

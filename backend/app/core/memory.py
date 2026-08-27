@@ -26,7 +26,7 @@ FUSION_KW_WEIGHT = 0.40
 FUSION_REC_WEIGHT = 0.05
 # Fusion relevance threshold: candidates below this fused score are not injected.
 # Tunable — governs recall vs precision on the injected memories.
-FUSION_THRESHOLD = 0.15
+FUSION_THRESHOLD = 0.2
 
 # Cap on the query fed into retrieval. The cross-encoder's memory grows with
 # query length (attention over every query/document pair); long pastes can
@@ -556,7 +556,7 @@ async def select_memories_for_query(
     for m in pinned[:_PINNED_CORE_LIMIT]:
         selected.append((m, "pinned"))
         seen.add(m.id)
-    for m in await hybrid_retrieve(db, query, k=5):
+    for m in await hybrid_retrieve(db, query, k=10):
         if m.id not in seen:
             selected.append((m, "recalled"))
             seen.add(m.id)
