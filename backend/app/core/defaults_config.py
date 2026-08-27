@@ -11,6 +11,7 @@ _CONFIG_KEYS = (
     "default_code_enabled",
     "default_mcp_enabled",
     "default_model",
+    "utility_model",
     "default_system_prompt",
 )
 
@@ -25,5 +26,6 @@ async def load_defaults_config(db: AsyncSession) -> DefaultsOut:
         default_code_enabled=(rows.get("default_code_enabled") or "false").lower() == "true",
         default_mcp_enabled=(rows.get("default_mcp_enabled") or "false").lower() == "true",
         default_model=rows.get("default_model") or "",
+        utility_model=rows.get("utility_model") or "",
         default_system_prompt=rows.get("default_system_prompt") or "",
     )

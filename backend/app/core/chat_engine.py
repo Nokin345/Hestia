@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.core.defaults_config import load_defaults_config
 from app.core.memory import (
     create_memory,
     extract_memories_with_model,
@@ -237,6 +238,26 @@ class ChatEngine:
             if total >= max_chars:
                 break
         return "\n\n".join(lines)
+
+    async def _utility_model_for(
+        self, fallback_provider_id: str, fallback_model: str
+    ) -> tuple[str, str]:
+        """Resolve the provider/model for background tasks (titles, memory extraction).
+
+        Returns the configured utility model when set; otherwise the chat
+        provider/model so behaviour matches "Same as chat model".
+        """
+        try:
+            cfg = await load_defaults_config(self.db)
+            util = (cfg.utility_model or "").strip()
+            if util and "::" in util:
+                provider_id, model = util.split("::", 1)
+                provider_id, model = provider_id.strip(), model.strip()
+                if provider_id and model and await get_provider(self.db, provider_id) is not None:
+                    return provider_id, model
+        except Exception:
+            pass
+        return fallback_provider_id, fallback_model
 
     async def _extract_memories(
         self,
@@ -858,11 +879,12 @@ class ChatEngine:
         await self.db.commit()
 
         if memory_enabled:
+            util_provider, util_model = await self._utility_model_for(provider_id, model)
             extract_task = asyncio.create_task(
                 self._extract_memories(
                     conversation_id,
-                    provider_id,
-                    model,
+                    util_provider,
+                    util_model,
                     memory_enabled,
                 )
             )
@@ -880,9 +902,10 @@ class ChatEngine:
                     first = text_parts[0].strip().replace("\n", " ")
                     conv.title = first[:60]
                 if first_user:
+                    title_provider, title_model = await self._utility_model_for(provider_id, model)
                     task = asyncio.create_task(
                         self._title_conversation(
-                            conversation_id, provider_id, model, first_user
+                            conversation_id, title_provider, title_model, first_user
                         )
                     )
                     _title_tasks.add(task)

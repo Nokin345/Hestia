@@ -31,12 +31,24 @@ export default function SettingsPage() {
   const [defaultModelSaved, setDefaultModelSaved] = useState(false)
   const [defaultModelError, setDefaultModelError] = useState('')
 
+  const [utilityModel, setUtilityModel] = useState<string>('')
+  const [savingUtilityModel, setSavingUtilityModel] = useState(false)
+  const [utilityModelSaved, setUtilityModelSaved] = useState(false)
+  const [utilityModelError, setUtilityModelError] = useState('')
+
   useEffect(() => {
     if (defaults) setDefaultModel(defaults.default_model ?? '')
   }, [defaults])
 
   const defaultModelDirty =
     defaults !== undefined && (defaultModel ?? '') !== (defaults.default_model ?? '')
+
+  useEffect(() => {
+    if (defaults) setUtilityModel(defaults.utility_model ?? '')
+  }, [defaults])
+
+  const utilityModelDirty =
+    defaults !== undefined && (utilityModel ?? '') !== (defaults.utility_model ?? '')
 
   const [type, setType] = useState('openrouter')
   const [name, setName] = useState('OpenRouter')
@@ -354,6 +366,21 @@ export default function SettingsPage() {
     }
   }
 
+  const saveUtilityModel = async () => {
+    setSavingUtilityModel(true)
+    setUtilityModelError('')
+    try {
+      await apiPatch<DefaultsConfig>('/defaults', { utility_model: utilityModel })
+      await queryClient.invalidateQueries({ queryKey: ['defaults'] })
+      setUtilityModelSaved(true)
+      setTimeout(() => setUtilityModelSaved(false), 2000)
+    } catch (e) {
+      setUtilityModelError((e as Error).message)
+    } finally {
+      setSavingUtilityModel(false)
+    }
+  }
+
   return (
     <Layout>
       <div className="mx-auto w-full max-w-3xl flex-1 overflow-y-auto px-4 py-8">
@@ -380,7 +407,7 @@ export default function SettingsPage() {
           <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">Models</h2>
 
           <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-            <h3 className="text-sm font-medium text-zinc-100">Default model</h3>
+            <h3 className="text-sm font-medium text-zinc-100">Chat model</h3>
             <p className="mt-1 text-xs text-zinc-500">
               The model new conversations start with. You can still change it per conversation
               in the composer.
@@ -410,6 +437,39 @@ export default function SettingsPage() {
             </div>
 
             {defaultModelError && <p className="mt-3 text-sm text-red-400">{defaultModelError}</p>}
+          </div>
+
+          <div className="mt-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+            <h3 className="text-sm font-medium text-zinc-100">Utility model</h3>
+            <p className="mt-1 text-xs text-zinc-500">
+              A smaller or cheaper model for background work — conversation titles and memory
+              extraction. Leave it on “Same as chat model” to use the chat model.
+            </p>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <select
+                value={utilityModel}
+                onChange={(e) => setUtilityModel(e.target.value)}
+                className="min-w-64 flex-1 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-600"
+              >
+                <option value="">Same as chat model</option>
+                {(allModels ?? []).map((m) => (
+                  <option key={`${m.provider_id}::${m.id}`} value={`${m.provider_id}::${m.id}`}>
+                    {m.provider_name} — {m.id}
+                  </option>
+                ))}
+              </select>
+              <Button
+                onClick={() => void saveUtilityModel()}
+                loading={savingUtilityModel}
+                disabled={!utilityModelDirty}
+              >
+                {utilityModelSaved ? <Check className="size-4" /> : <Save className="size-4" />}
+                {utilityModelSaved ? 'Saved' : 'Save'}
+              </Button>
+            </div>
+
+            {utilityModelError && <p className="mt-3 text-sm text-red-400">{utilityModelError}</p>}
           </div>
 
           {providers?.length === 0 && (

@@ -63,6 +63,7 @@ export interface DefaultsConfig {
   default_code_enabled: boolean
   default_mcp_enabled: boolean
   default_model: string
+  utility_model: string
   default_system_prompt: string
 }
 

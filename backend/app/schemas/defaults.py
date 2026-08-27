@@ -8,6 +8,7 @@ class DefaultsOut(BaseModel):
     default_code_enabled: bool = False
     default_mcp_enabled: bool = False
     default_model: str = ""
+    utility_model: str = ""
     default_system_prompt: str = ""
 
 
@@ -18,6 +19,7 @@ class DefaultsUpdate(BaseModel):
     default_code_enabled: bool | None = None
     default_mcp_enabled: bool | None = None
     default_model: str | None = None
+    utility_model: str | None = None
     default_system_prompt: str | None = None
 
 
