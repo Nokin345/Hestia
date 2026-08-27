@@ -214,36 +214,25 @@ class ChatEngine:
         except Exception:
             return
 
-    @staticmethod
-    def _recent_entries(
-        history: list[ChatMessage], user_parts: list[MessagePart], n: int = 6
-    ) -> list[tuple[str, str]]:
-        """Last n (role, text) pairs; ensures the current user message is last."""
-        entries: list[tuple[str, str]] = []
-        for m in history:
-            if m.role not in ("user", "assistant"):
-                continue
-            text = "".join(p.text or "" for p in m.parts if p.type == "text").strip()
-            if text:
-                entries.append((m.role, text))
-        cur = "".join(p.text or "" for p in user_parts).strip()
-        last_user = next(
-            (text for role, text in reversed(entries) if role == "user"), None
-        )
-        if cur and cur != last_user:
-            entries.append(("user", cur))
-        return entries[-n:]
-
     @classmethod
     def _recent_text(
-        cls, history: list[ChatMessage], user_parts: list[MessagePart], n: int = 6
+        cls, history: list[ChatMessage], user_parts: list[MessagePart]
     ) -> str:
-        """Last n messages' text (user + assistant), labeled, for the recall query."""
-        lines = [
-            f"{'User' if role == 'user' else 'Assistant'}: {text[:1500]}"
-            for role, text in cls._recent_entries(history, user_parts, n)
-        ]
-        return "\n\n".join(lines)
+        """Last assistant response + current user query, labeled, for the recall query."""
+        cur = "".join(p.text or "" for p in user_parts).strip()
+        last_assistant = None
+        for m in reversed(history):
+            if m.role == "assistant":
+                text = "".join(p.text or "" for p in m.parts if p.type == "text").strip()
+                if text:
+                    last_assistant = text
+                    break
+        parts: list[str] = []
+        if last_assistant:
+            parts.append(f"Assistant: {last_assistant[:1500]}")
+        if cur:
+            parts.append(f"User: {cur[:1500]}")
+        return "\n\n".join(parts)
 
     @classmethod
     def _recent_has_content(
