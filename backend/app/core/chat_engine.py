@@ -645,10 +645,10 @@ class ChatEngine:
         recent_text = self._recent_text(history, user_parts)
         recent_has_content = self._recent_has_content(history, user_parts)
         if memory_enabled:
-            if recent_has_content:
-                memories = await select_memories_for_query(self.db, recent_text)
-            else:
-                memories = []
+            # Empty query for trivial turns: skips retrieval, keeps pinned only.
+            memories = await select_memories_for_query(
+                self.db, recent_text if recent_has_content else ""
+            )
             memory_context = format_memory_context(
                 [m for m, _ in memories]
             )
