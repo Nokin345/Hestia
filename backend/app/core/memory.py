@@ -610,6 +610,15 @@ _EXTRACT_SYSTEM = (
     "- If nothing durable was revealed, return []\n\n"
     "Return a JSON array of objects with 'text' and 'category' fields.\n"
     "Categories: 'identity', 'preference', 'event', 'contact', 'fact'.\n\n"
+    "Example format:\n"
+    "[{\"text\": \"User's name is Peter\", \"category\": \"identity\"},\n"
+    " {\"text\": \"User lives in Berlin\", \"category\": \"identity\"},\n"
+    " {\"text\": \"User is interested in hiking\", \"category\": \"preference\"},\n"
+    " {\"text\": \"User's birthday is in March\", \"category\": \"identity\"},\n"
+    " {\"text\": \"User has a cat named Whiskers\", \"category\": \"fact\"},\n"
+    " {\"text\": \"User works as a software engineer\", \"category\": \"identity\"},\n"
+    " {\"text\": \"User's email is user@example.com\", \"category\": \"contact\"},\n"
+    " {\"text\": \"User dislikes spicy food\", \"category\": \"preference\"}]\n\n"
     "Return ONLY valid JSON, no markdown fences."
 )
 
