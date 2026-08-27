@@ -17,6 +17,7 @@ from app.core.memory import (
     extract_memories_with_model,
     find_duplicate,
     format_memory_context,
+    has_content_words,
     load_memory_config,
     select_memories_for_query,
 )
@@ -203,6 +204,51 @@ class ChatEngine:
                     await db.commit()
         except Exception:
             return
+
+    @staticmethod
+    def _recent_entries(
+        history: list[ChatMessage], user_parts: list[MessagePart], n: int = 6
+    ) -> list[tuple[str, str]]:
+        """Last n (role, text) pairs; ensures the current user message is last."""
+        entries: list[tuple[str, str]] = []
+        for m in history:
+            if m.role not in ("user", "assistant"):
+                continue
+            text = "".join(p.text or "" for p in m.parts if p.type == "text").strip()
+            if text:
+                entries.append((m.role, text))
+        cur = "".join(p.text or "" for p in user_parts).strip()
+        last_user = next(
+            (text for role, text in reversed(entries) if role == "user"), None
+        )
+        if cur and cur != last_user:
+            entries.append(("user", cur))
+        return entries[-n:]
+
+    @classmethod
+    def _recent_text(
+        cls, history: list[ChatMessage], user_parts: list[MessagePart], n: int = 6
+    ) -> str:
+        """Last n messages' text (user + assistant), labeled, for the recall query."""
+        lines = [
+            f"{'User' if role == 'user' else 'Assistant'}: {text[:1500]}"
+            for role, text in cls._recent_entries(history, user_parts, n)
+        ]
+        return "\n\n".join(lines)
+
+    @classmethod
+    def _recent_has_content(
+        cls, history: list[ChatMessage], user_parts: list[MessagePart], n: int = 6
+    ) -> bool:
+        """True if any of the last n messages has meaningful words.
+
+        Checked on raw message text (no role labels) so "hi"/"ok"/"thanks"
+        correctly read as trivial and skip recall/extraction.
+        """
+        return any(
+            has_content_words(text)
+            for _, text in cls._recent_entries(history, user_parts, n)
+        )
 
     async def _conversation_transcript(
         self, db: AsyncSession, conversation_id: str, max_messages: int = 60, max_chars: int = 12000
@@ -596,8 +642,13 @@ class ChatEngine:
         memories_snapshot: list[dict[str, Any]] | None = None
         memory_context = ""
         rag_content = ""
+        recent_text = self._recent_text(history, user_parts)
+        recent_has_content = self._recent_has_content(history, user_parts)
         if memory_enabled:
-            memories = await select_memories_for_query(self.db, user_text)
+            if recent_has_content:
+                memories = await select_memories_for_query(self.db, recent_text)
+            else:
+                memories = []
             memory_context = format_memory_context(
                 [m for m, _ in memories]
             )
@@ -874,7 +925,7 @@ class ChatEngine:
         )
         await self.db.commit()
 
-        if memory_enabled:
+        if memory_enabled and recent_has_content:
             util_provider, util_model = await self._utility_model_for(provider_id, model)
             extract_task = asyncio.create_task(
                 self._extract_memories(

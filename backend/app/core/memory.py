@@ -26,7 +26,7 @@ FUSION_KW_WEIGHT = 0.40
 FUSION_REC_WEIGHT = 0.05
 # Fusion relevance threshold: candidates below this fused score are not injected.
 # Tunable — governs recall vs precision on the injected memories.
-FUSION_THRESHOLD = 0.12
+FUSION_THRESHOLD = 0.15
 
 # Cap on the query fed into retrieval. The cross-encoder's memory grows with
 # query length (attention over every query/document pair); long pastes can
@@ -109,6 +109,15 @@ def _content_words(text: str) -> list[str]:
         for w in re.findall(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", text.lower())
         if len(w) >= 3 and w not in _STOPWORDS
     ]
+
+
+def has_content_words(text: str) -> bool:
+    """True if the text has any meaningful words (not just greetings/filler).
+
+    Used as a trivial-query guard: "hi", "ok", "thanks" return False so we
+    skip memory recall/extraction for pointless turns.
+    """
+    return bool(_content_words(text))
 
 
 def get_text_similarity(text1: str, text2: str) -> float:
