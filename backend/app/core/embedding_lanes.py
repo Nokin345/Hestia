@@ -51,7 +51,7 @@ def build_embedding_lane(
     base_name: str,
     data_dir: str,
 ) -> EmbeddingLane | None:
-    """Build an embedding lane using the hardcoded e5-small model.
+    """Build an embedding lane using the local fastembed model.
 
     Drops any existing collection with incompatible dimensions and starts fresh.
     """
@@ -65,7 +65,7 @@ def build_embedding_lane(
         return None
 
     dimension = engine.get_dimension()
-    name = f"{base_name}_e5"
+    name = base_name
 
     chroma = get_chroma_client(data_dir)
     try:

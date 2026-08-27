@@ -218,7 +218,6 @@ export interface EmbeddingStats {
   healthy: boolean
   count: number
   lane: string | null
-  model: string | null
   dimension: number | null
 }
 

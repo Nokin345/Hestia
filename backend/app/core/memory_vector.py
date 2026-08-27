@@ -130,14 +130,12 @@ class MemoryVectorStore:
                 "healthy": False,
                 "count": 0,
                 "lane": None,
-                "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
                 "dimension": 384,
             }
         return {
             "healthy": True,
             "count": self.count(),
             "lane": self._collection.name if self._collection else None,
-            "model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
             "dimension": 384,
         }
 

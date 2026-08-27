@@ -7,11 +7,12 @@ A self-hosted, local-first AI chat assistant with retrieval-augmented generation
 - **Local-first LLMs** — built around [Ollama](https://ollama.com) and [llama.cpp](https://github.com/ggml-org/llama.cpp) as first-class providers, so models run on your own hardware. No API keys required.
 - **Cloud models when you want them** — add OpenRouter (a single key covers hundreds of models) or any OpenAI-compatible endpoint (OpenAI, vLLM, GPUStack, Together, llama.cpp servers). Switch providers and models per conversation.
 - **Knowledge base (RAG)** — upload documents (PDF, Markdown, plain text, CSV, JSON, XML) into a per-document knowledge base; enable KB retrieval per conversation to ground answers in your own content.
+- **OCR for image documents** — read scanned/image PDFs and photos via a remote vision-model endpoint or a local RapidOCR fallback (zero-config).
 - **Long-term memory** — the assistant auto-extracts and stores facts, preferences, and user details between conversations, retrieves the relevant ones, and can recall memories on demand.
 - **Web search** — SearXNG-backed search with DuckDuckGo fallback, including page content fetching as context.
 - **Sandboxed code execution** — Stateless [Piston](https://github.com/engineer-man/piston) container supporting Python, Node.js, Go, Java. Network-isolated by default.
 - **MCP tool servers** — connect external MCP servers (HTTP transport) and the model can call their tools; toggled per conversation.
-- **Local embeddings** — `fastembed` ONNX models (`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` for memory, `jina-reranker-v2-base-multilingual` for reranking); used for both KB and memory retrieval.
+- **Local embeddings** — `fastembed` ONNX models: `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` for embedding (both KB and memory) and `jinaai/jina-reranker-v2-base-multilingual` for reranking memory retrieval.
 - **Per-conversation toggles** — independently enable/disable KB, memory, web search, code execution, and reasoning for each chat.
 - **System prompt presets & defaults** — set a default model and default conversation toggles.
 

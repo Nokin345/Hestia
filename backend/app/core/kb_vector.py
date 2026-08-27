@@ -154,13 +154,12 @@ class KbVectorStore:
 
     def get_stats(self) -> dict:
         if self._lane is None:
-            return {"healthy": False, "count": 0, "lane": None, "model": "intfloat/multilingual-e5-small", "dimension": 384}
+            return {"healthy": False, "count": 0, "lane": None, "dimension": 384}
         return {
             "healthy": self.healthy,
             "count": self.count(),
             "lane": self._lane.name,
-            "model": "intfloat/multilingual-e5-small",
-            "dimension": 384,
+            "dimension": self._lane.dimension,
         }
 
 
