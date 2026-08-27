@@ -596,7 +596,7 @@ def format_memory_context(memories: list[Memory]) -> str:
 # ---------------------------------------------------------------------------
 
 _EXTRACT_SYSTEM = (
-    "Your task is to extract durable, certain facts about the USER from the "
+    "Your task is to extract durable, certain information about the USER — including facts, preferences, interests, and notable events — from the "
     "conversation above. Extract from the user's first message — this instruction "
     "message is not the user. The assistant's message is context only — do not "
     "extract facts from it.\n\n"
@@ -606,7 +606,7 @@ _EXTRACT_SYSTEM = (
     "- Only extract facts that are clearly stated — avoid vague or uncertain statements\n"
     "- If the user is asking a question, return [] — questions contain no facts about the user\n"
     "- Never extract feelings, emotions, or states of mind\n"
-    "- Don't infer interests from topics they simply discussed\n"
+    "- Only capture interests the user explicitly states or strongly implies — don't infer them from topics merely discussed\n"
     "- If nothing durable was revealed, return []\n\n"
     "Return a JSON array of {\"text\": \"...\", \"category\": \"...\"}.\n"
     "Categories: identity, preference, event, contact, fact.\n"
