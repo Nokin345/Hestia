@@ -55,17 +55,26 @@ _SEARCH_TOOLS: list[dict[str, Any]] = [
         "name": "read_url",
         "description": (
             "Fetch a single URL and return its readable text content. "
-            "Use this to read the full content of a specific page."
+            "Use this to read the full content of a specific page. "
+            "Default max_chars: {default_chars}."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "The URL to read."}
+                "url": {"type": "string", "description": "The URL to read."},
+                "max_chars": {
+                    "type": "integer",
+                    "description": "Max characters to return (default {default_chars}). "
+                                   "Set higher (up to 50000) for long articles, "
+                                   "or lower to save tokens.",
+                },
             },
             "required": ["url"],
         },
     },
 ]
+
+_READ_URL_MAX = 50000
 
 _CODE_TOOL: dict[str, Any] = {
     "name": "run_code",
@@ -545,7 +554,9 @@ class ChatEngine:
             url = str(args.get("url") or "").strip()
             if not url:
                 return False, "read_url: missing 'url' argument"
-            text = await fetch_url(url, 20000)
+            requested = int(args.get("max_chars", cfg.max_chars_per_url))
+            limit = min(max(requested, 500), _READ_URL_MAX)
+            text = await fetch_url(url, limit)
             if not text:
                 return False, f"read_url: could not read {url}"
             return True, text
@@ -712,9 +723,37 @@ class ChatEngine:
                     }
             except Exception as exc:
                 logger.warning("KB retrieval failed: %s", exc)
-        tools: list[dict[str, Any]] = [
-            dict(t) for t in _SEARCH_TOOLS
-        ] if search else []
+        tools: list[dict[str, Any]] = []
+        if search:
+            try:
+                _search_cfg = await load_search_config(self.db)
+                default_chars = _search_cfg.max_chars_per_url
+            except Exception:
+                default_chars = 4000
+            for t in _SEARCH_TOOLS:
+                if t["name"] == "read_url":
+                    td = {
+                        "name": t["name"],
+                        "description": t["description"].format(
+                            default_chars=default_chars
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                k: {
+                                    "type": v["type"],
+                                    "description": v["description"].format(
+                                        default_chars=default_chars
+                                    ),
+                                }
+                                for k, v in t["parameters"]["properties"].items()
+                            },
+                            "required": list(t["parameters"]["required"]),
+                        },
+                    }
+                else:
+                    td = dict(t)
+                tools.append(td)
         if code:
             tools.append(dict(_CODE_TOOL))
         if mcp_tools:

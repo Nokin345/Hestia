@@ -35,5 +35,5 @@ async def load_search_config(db: AsyncSession) -> SearchConfigOut:
         fallback=(rows.get("fallback") or "true").lower() == "true",
         fetch_urls=(rows.get("fetch_urls") or "true").lower() == "true",
         fetch_limit=_bounded_int(rows.get("fetch_limit"), 1, 1, 10),
-        max_chars_per_url=_bounded_int(rows.get("max_chars_per_url"), 4000, 500, 20000),
+        max_chars_per_url=_bounded_int(rows.get("max_chars_per_url"), 4000, 500, 50000),
     )

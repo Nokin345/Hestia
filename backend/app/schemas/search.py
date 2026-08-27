@@ -7,7 +7,7 @@ class SearchConfigOut(BaseModel):
     fallback: bool = True
     fetch_urls: bool = True
     fetch_limit: int = Field(default=1, ge=1, le=10)
-    max_chars_per_url: int = Field(default=4000, ge=500, le=20000)
+    max_chars_per_url: int = Field(default=4000, ge=500, le=50000)
 
 
 class SearchConfigUpdate(BaseModel):
@@ -16,7 +16,7 @@ class SearchConfigUpdate(BaseModel):
     fallback: bool | None = None
     fetch_urls: bool | None = None
     fetch_limit: int | None = Field(default=None, ge=1, le=10)
-    max_chars_per_url: int | None = Field(default=None, ge=500, le=20000)
+    max_chars_per_url: int | None = Field(default=None, ge=500, le=50000)
 
 
 class SearchTestRequest(BaseModel):

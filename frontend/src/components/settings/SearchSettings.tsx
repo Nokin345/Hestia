@@ -163,14 +163,14 @@ export function SearchSettings() {
                 />
               </label>
               <label className="block">
-                <span className="mb-1.5 block text-xs text-zinc-400">Max chars per page</span>
+                <span className="mb-1.5 block text-xs text-zinc-400">Default max chars per page</span>
                 <Input
                   type="number"
                   min={500}
-                  max={20000}
+                  max={50000}
                   step={500}
                   value={maxChars}
-                  onChange={(e) => setMaxChars(Math.min(20000, Math.max(500, Number(e.target.value) || 500)))}
+                  onChange={(e) => setMaxChars(Math.min(50000, Math.max(500, Number(e.target.value) || 500)))}
                 />
               </label>
             </div>
