@@ -218,7 +218,11 @@ function protectCurrency(raw: string): string {
   out = out.replace(/\$[^$]*?\$/g, (m) => {
     const inner = m.slice(1, -1)
     // LaTeX commands, operators, or grouping → math
-    if (/[\\^_{}=+*\/()\[\],|:;!?<>]/.test(inner)) return mask(m)
+    if (/[\\^_{}=+*\/()\[\],|:;!?<>]/.test(inner)) {
+      // Replace bare | with \vert so remark-gfm won't see it as a table separator
+      const patched = m.replace(/\|/g, '\\vert ')
+      return mask(patched)
+    }
     // Single letter variable (e.g. $E$, $x$) → math
     if (/^[A-Za-z]+$/.test(inner)) return mask(m)
     // Long content → likely math
