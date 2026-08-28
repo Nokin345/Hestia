@@ -234,37 +234,6 @@ class ChatEngine:
         cur = "".join(p.text or "" for p in user_parts).strip()
         return has_content_words(cur)
 
-    async def _conversation_transcript(
-        self, db: AsyncSession, conversation_id: str, max_messages: int = 60, max_chars: int = 12000
-    ) -> str:
-        """Render the conversation's user/assistant text as a plain transcript.
-
-        Mirrors odysseus's /api/memory/extract, which runs extraction against
-        the entire conversation history rather than the latest exchange.
-        """
-        stmt = (
-            select(Message)
-            .where(Message.conversation_id == conversation_id)
-            .order_by(Message.created_at.desc())
-            .limit(max_messages)
-        )
-        rows = list(reversed((await db.execute(stmt)).scalars().all()))
-        lines: list[str] = []
-        total = 0
-        for row in rows:
-            if row.role not in ("user", "assistant"):
-                continue
-            parts = parts_from_json(row.content)
-            text = "".join(p.text or "" for p in parts if p.type == "text").strip()
-            if not text:
-                continue
-            chunk = f"{'User' if row.role == 'user' else 'Assistant'}: {text[:2000]}"
-            lines.append(chunk)
-            total += len(chunk)
-            if total >= max_chars:
-                break
-        return "\n\n".join(lines)
-
     async def _utility_model_for(
         self, fallback_provider_id: str, fallback_model: str
     ) -> tuple[str, str]:
