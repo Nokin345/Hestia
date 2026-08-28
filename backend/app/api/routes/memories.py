@@ -16,11 +16,12 @@ async def list_memories(db: AsyncSession = Depends(get_db)):
 @router.get("/search", response_model=list[MemoryOut])
 async def search_memory(
     q: str = Query(default=""),
+    sort: str = Query(default="relevance"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
 ):
-    return await memory_service.search_memories(db, q, limit=limit, offset=offset)
+    return await memory_service.search_memories(db, q, limit=limit, offset=offset, sort=sort)
 
 
 @router.post("", response_model=MemoryOut)

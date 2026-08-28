@@ -159,12 +159,15 @@ export default function MemoriesPage() {
   const baseList = searchResults ?? (memories ?? [])
   const visibleMemories = useMemo(() => {
     const list = baseList.filter((m) => !hiddenCategories.has(m.category))
+    if (searchResults) {
+      return [...list].sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1))
+    }
     const cmp = SORT_COMPARE[sort]
     return [...list].sort((a, b) => {
       if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
       return cmp(a, b)
     })
-  }, [baseList, hiddenCategories, sort])
+  }, [baseList, hiddenCategories, sort, searchResults])
 
   const toggleHiddenCategory = (c: MemoryCategory) => {
     setHiddenCategories((prev) => {
@@ -180,7 +183,7 @@ export default function MemoriesPage() {
     setSearchLoadingMore(true)
     try {
       const res = await apiFetch<Memory[]>(
-        `/memories/search?q=${encoded}&limit=${SEARCH_PAGE}&offset=${offset}`,
+        `/memories/search?q=${encoded}&sort=${sort}&limit=${SEARCH_PAGE}&offset=${offset}`,
       )
       if (offset === 0) setSearchResults(res)
       else setSearchResults((prev) => [...(prev ?? []), ...res])
@@ -207,7 +210,7 @@ export default function MemoriesPage() {
       setSearchError('')
       try {
         const res = await apiFetch<Memory[]>(
-          `/memories/search?q=${encodeURIComponent(q)}&limit=${SEARCH_PAGE}&offset=0`,
+          `/memories/search?q=${encodeURIComponent(q)}&sort=${sort}&limit=${SEARCH_PAGE}&offset=0`,
         )
         if (cancelled) return
         setSearchResults(res)
@@ -221,7 +224,7 @@ export default function MemoriesPage() {
       cancelled = true
       clearTimeout(timer)
     }
-  }, [searchQuery])
+  }, [searchQuery, sort])
 
   const pinnedCount = (memories ?? []).filter((m) => m.pinned).length
   const pinsFull = pinnedCount >= MAX_PINNED
@@ -520,7 +523,7 @@ export default function MemoriesPage() {
                 aria-label="Sort memories by"
                 className="rounded-lg border border-zinc-700 bg-zinc-950 px-2 py-2 text-sm text-zinc-100 outline-none transition-colors focus:border-indigo-600"
               >
-                <option value="relevance">Most used</option>
+                <option value="relevance">Relevance</option>
                 <option value="recalled">Recently recalled</option>
                 <option value="added">Recently added</option>
               </select>
@@ -598,9 +601,10 @@ export default function MemoriesPage() {
                         </span>
                       )}
                       <span>used {m.uses}×</span>
-                      <span>
-                        {new Date(m.created_at).toLocaleDateString()}
-                      </span>
+                      <span>created {new Date(m.created_at).toLocaleDateString()}</span>
+                      {m.last_recalled_at && (
+                        <span>last recalled {new Date(m.last_recalled_at).toLocaleDateString()}</span>
+                      )}
                     </div>
                   </div>
                   <ActionMenu

@@ -26,7 +26,7 @@ FUSION_KW_WEIGHT = 0.40
 FUSION_REC_WEIGHT = 0.05
 # Fusion relevance threshold: candidates below this fused score are not injected.
 # Tunable — governs recall vs precision on the injected memories.
-FUSION_THRESHOLD = 0.2
+FUSION_THRESHOLD = 0.19
 
 # Cap on the query fed into retrieval. The cross-encoder's memory grows with
 # query length (attention over every query/document pair); long pastes can
@@ -36,7 +36,7 @@ RETRIEVAL_QUERY_MAX_CHARS = 2000
 
 # Semantic near-duplicate threshold: cosine at/above this collapses a new text
 # onto an existing memory in the vector store. Tunable — still being tested.
-SEMANTIC_DUP_THRESHOLD = 0.9
+SEMANTIC_DUP_THRESHOLD = 0.8
 
 # Recency freshness (0..1 decay tiebreak): fresh memories score higher.
 # RECENT_DECAY=0.05/day → freshness halves every ~20 days.
@@ -411,13 +411,12 @@ async def hybrid_retrieve(
 
 
 async def search_memories(
-    db: AsyncSession, query: str, limit: int = 50, offset: int = 0
+    db: AsyncSession, query: str, limit: int = 50, offset: int = 0, sort: str = "relevance"
 ) -> list[Memory]:
     """Hybrid (semantic + keyword) search over memories for the management UI.
 
-    Returns the top-N union candidates ranked by cross-encoder relevance. Unlike
-    hybrid_retrieve it does NOT apply the fusion threshold — it returns whatever
-    is closest so a user can browse, even if none clears the injection threshold.
+    Exact keyword matches float to the top, then semantic results. Within each
+    group, memories are sorted by the chosen field (relevance=uses, recalled=last_recalled_at, added=created_at).
     """
     query = query[:RETRIEVAL_QUERY_MAX_CHARS]
     if not query.strip():
@@ -433,14 +432,30 @@ async def search_memories(
     if not candidates:
         return []
 
-    texts = [mem.text for mem, _, _ in candidates]
-    scores = await _rerank_scores(db, query, texts)
-    if scores is not None:
-        ranked = [mem for mem, _ in sorted(zip(candidates, scores), key=lambda t: t[1], reverse=True)]
-    else:
-        ranked = list(candidates)
+    query_lower = query.lower()
+    exact: list[Memory] = []
+    semantic: list[Memory] = []
+    for mem, _, _ in candidates:
+        if query_lower in mem.text.lower():
+            exact.append(mem)
+        else:
+            semantic.append(mem)
 
-    return [m for m, _, _ in ranked[offset : offset + limit]]
+    if sort == "recalled":
+        key = lambda m: (m.last_recalled_at or m.created_at)
+        reverse = True
+    elif sort == "added":
+        key = lambda m: m.created_at
+        reverse = True
+    else:
+        key = lambda m: m.uses
+        reverse = True
+
+    exact.sort(key=key, reverse=reverse)
+    semantic.sort(key=key, reverse=reverse)
+
+    ranked = exact + semantic
+    return ranked[offset : offset + limit]
 
 
 async def _rerank_scores(
