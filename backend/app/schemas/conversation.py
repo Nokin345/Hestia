@@ -96,6 +96,8 @@ class MessageOut(BaseModel):
     tool_calls: list[MessageToolCallOut] = []
     usage: dict[str, int | float | None] | None = None
     memories_used: list[dict] | None = None
+    kb_sources: list[dict] | None = None
+    kb_line_ranges: dict[str, list[list[int]]] | None = None
     error: str | None = None
     created_at: datetime
 

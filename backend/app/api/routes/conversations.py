@@ -44,6 +44,15 @@ def _message_out(row: Message) -> MessageOut:
             return None
         return data if isinstance(data, list) else None
 
+    def _json_dict(raw: str | None) -> dict | None:
+        if not raw:
+            return None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+        return data if isinstance(data, dict) else None
+
     return MessageOut(
         id=row.id,
         conversation_id=row.conversation_id,
@@ -55,6 +64,8 @@ def _message_out(row: Message) -> MessageOut:
         tool_calls=json.loads(row.tool_calls) if row.tool_calls else [],
         usage=_usage(row.usage),
         memories_used=_memories(row.memories_used),
+        kb_sources=_memories(row.kb_sources),
+        kb_line_ranges=_json_dict(row.kb_line_ranges),
         error=row.error,
         created_at=row.created_at,
     )

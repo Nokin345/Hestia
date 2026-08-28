@@ -612,9 +612,15 @@ function MemoryPill({
   )
 }
 
-function KbPill({ sources }: { sources: KbSource[] }) {
+function KbPill({ sources, lineRanges }: { sources: KbSource[]; lineRanges?: Record<string, [number, number][]> }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const cachedRanges = useRef<Record<string, [number, number][]>>({})
+
+  if (lineRanges && Object.keys(lineRanges).length > 0) {
+    cachedRanges.current = lineRanges
+  }
+  const activeRanges = lineRanges && Object.keys(lineRanges).length > 0 ? lineRanges : cachedRanges.current
 
   useEffect(() => {
     if (!open) return
@@ -626,6 +632,9 @@ function KbPill({ sources }: { sources: KbSource[] }) {
   }, [open])
 
   const names = [...new Set(sources.map((s) => s.filename))]
+
+  const fmtLines = (ranges: [number, number][]): string =>
+    ranges.map(([s, e]) => (s === e ? `line ${s}` : `line ${s}-${e}`)).join(', ')
 
   return (
     <div className="relative" ref={ref}>
@@ -647,16 +656,21 @@ function KbPill({ sources }: { sources: KbSource[] }) {
         </span>
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border border-zinc-700 bg-zinc-900/95 p-1.5 shadow-2xl shadow-black/50 backdrop-blur">
-          {names.map((name) => (
-            <div key={name} className="flex items-start gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0 text-zinc-500" aria-hidden="true">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-              </svg>
-              <span className="min-w-0 flex-1 leading-snug break-all">{name}</span>
-            </div>
-          ))}
+        <div className="absolute left-0 top-full z-50 mt-1 w-max rounded-lg border border-zinc-700 bg-zinc-900/95 p-1.5 shadow-2xl shadow-black/50 backdrop-blur">
+          {names.map((name) => {
+            const ranges = activeRanges?.[name]
+            return (
+              <div key={name} className="flex items-start gap-2 rounded-md px-2 py-1.5 text-xs text-zinc-200 hover:bg-zinc-800">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0 text-zinc-500" aria-hidden="true">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                </svg>
+                <span className="whitespace-nowrap text-zinc-300">
+                  {ranges && ranges.length > 0 ? fmtLines(ranges) : ''}
+                </span>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -917,7 +931,7 @@ export function AssistantTurn({
   onEdit,
   onDelete,
 }: {
-  rows: Array<{ role: string; parts: MessagePart[]; error?: string | null; usage?: ChatUsage | null; memories_used?: Message['memories_used'] | null; retrieved_memories?: RetrievedMemory[]; retrieved_kb?: KbSource[]; retrievedMemories?: RetrievedMemory[]; retrievedKb?: KbSource[] }>
+  rows: Array<{ role: string; parts: MessagePart[]; error?: string | null; usage?: ChatUsage | null; memories_used?: Message['memories_used'] | null; retrieved_memories?: RetrievedMemory[]; retrieved_kb?: KbSource[]; retrievedMemories?: RetrievedMemory[]; retrievedKb?: KbSource[]; kbLineRanges?: Record<string, [number, number][]> }>
   senderName?: string
   isStreaming?: boolean
   expectsReasoning?: boolean
@@ -943,6 +957,7 @@ export function AssistantTurn({
   const streamingLabel = activeTool ? `Calling ${activeTool}…` : reasoningPending ? 'Thinking…' : 'Generating…'
   const retrievedMemories = lastAssistant?.retrievedMemories || lastAssistant?.retrieved_memories || []
   const retrievedKb = lastAssistant?.retrievedKb || lastAssistant?.retrieved_kb || []
+  const kbLineRanges = (lastAssistant as { kbLineRanges?: Record<string, [number, number][]> } | undefined)?.kbLineRanges
 
   const bubbleEls: ReactNode[] = []
   if (bubbles.length === 0 && isStreaming) {
@@ -1030,7 +1045,7 @@ export function AssistantTurn({
         {(lastAssistant?.usage || lastAssistant?.error) && (
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1">
             {retrievedMemories.length > 0 && <MemoryPill memories={retrievedMemories} isStreaming={isStreaming} />}
-            {retrievedKb.length > 0 && <KbPill sources={retrievedKb} />}
+            {retrievedKb.length > 0 && <KbPill sources={retrievedKb} lineRanges={kbLineRanges} />}
             {lastAssistant.usage && <UsageFooter usage={lastAssistant.usage} />}
           </div>
         )}

@@ -175,6 +175,8 @@ export interface Message {
   tool_calls?: { id: string; name: string; arguments: Record<string, unknown> }[]
   usage?: ChatUsage | null
   memories_used?: { id: string; text: string; category: string; type: 'pinned' | 'recalled' }[] | null
+  kb_sources?: { filename: string; similarity: number; role: string }[] | null
+  kb_line_ranges?: Record<string, [number, number][]> | null
   error?: string | null
   created_at: string
 }

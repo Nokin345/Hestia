@@ -41,6 +41,8 @@ def _migrate_sqlite(sync_conn) -> None:
             "usage": "TEXT",
             "model": "VARCHAR(100)",
             "memories_used": "TEXT",
+            "kb_sources": "TEXT",
+            "kb_line_ranges": "TEXT",
         },
         "memories": {
             "last_recalled_at": "DATETIME",

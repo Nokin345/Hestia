@@ -353,6 +353,8 @@ class ChatEngine:
         usage: dict[str, Any] | None = None,
         model: str | None = None,
         memories_used: list[dict[str, Any]] | None = None,
+        kb_sources: list[dict[str, Any]] | None = None,
+        kb_line_ranges: dict[str, list[list[int]]] | None = None,
     ) -> str:
         row = Message(
             conversation_id=conversation_id,
@@ -362,6 +364,12 @@ class ChatEngine:
             usage=json.dumps(usage, ensure_ascii=False) if usage else None,
             memories_used=json.dumps(memories_used, ensure_ascii=False)
             if memories_used
+            else None,
+            kb_sources=json.dumps(kb_sources, ensure_ascii=False)
+            if kb_sources
+            else None,
+            kb_line_ranges=json.dumps(kb_line_ranges, ensure_ascii=False)
+            if kb_line_ranges
             else None,
             tool_calls=json.dumps(
                 [tc.model_dump() for tc in msg.tool_calls], ensure_ascii=False
@@ -621,6 +629,8 @@ class ChatEngine:
             f"Current location: {city} (timezone {tz}, {off_label})."
         )
         memories_snapshot: list[dict[str, Any]] | None = None
+        kb_snapshot: list[dict[str, Any]] | None = None
+        kb_line_ranges_snapshot: dict[str, list[list[int]]] | None = None
         memory_context = ""
         rag_content = ""
         recent_text = self._recent_text(history, user_parts)
@@ -679,22 +689,39 @@ class ChatEngine:
                         }
                         for r in results
                     ]
+                    kb_snapshot = rag_sources
 
-                    # Group by document, show chunks in order
-                    doc_groups: dict[str, list[dict]] = {}
+                    # Group by document, show chunks in order, stripping overlap
+                    from app.core.kb_ingest import join_chunks
+
+                    doc_groups: dict[str, dict] = {}
                     for r in results:
                         fn = r["metadata"].get("filename", "unknown")
-                        doc_groups.setdefault(fn, []).append(r)
+                        doc_id = r["metadata"].get("doc_id", "")
+                        if fn not in doc_groups:
+                            doc_groups[fn] = {"doc_id": doc_id, "chunks": []}
+                        doc_groups[fn]["chunks"].append(r)
 
                     parts: list[str] = []
-                    for fn, chunks in doc_groups.items():
-                        block = f"[{fn}]"
-                        for c in chunks:
-                            role = c.get("role", "match")
-                            chunk_i = c["metadata"].get("chunk", 0)
-                            label = f"chunk {chunk_i}" if role == "match" else f"context {chunk_i}"
-                            block += f"\n\n[{label}]\n{c['document']}"
+                    line_ranges_by_doc: dict[str, list[tuple[int, int]]] = {}
+                    for fn, info in doc_groups.items():
+                        cs = info["chunks"]
+                        cs.sort(key=lambda c: c["metadata"].get("chunk", 0))
+                        merged = join_chunks([(c["metadata"].get("chunk", 0), c["document"]) for c in cs])
+                        chunk_labels = ", ".join(
+                            f"{c['metadata'].get('chunk', '?')}"
+                            for c in cs
+                        )
+                        block = f"[{fn}] (chunks {chunk_labels})\n{merged}"
                         parts.append(block)
+
+                        indices = [c["metadata"].get("chunk", 0) for c in cs]
+                        line_ranges_by_doc[fn] = store.get_line_ranges(info["doc_id"], indices)
+                        logger.warning("line_ranges for %s: %s", fn, line_ranges_by_doc[fn])
+                    kb_line_ranges_snapshot = {
+                        fn: [[s, e] for s, e in ranges]
+                        for fn, ranges in line_ranges_by_doc.items()
+                    }
 
                     rag_content = "Relevant documents:\n\n" + "\n\n---\n\n".join(parts)
                     if len(rag_content) > 10000:
@@ -705,6 +732,7 @@ class ChatEngine:
                             {
                                 "count": match_count,
                                 "sources": rag_sources,
+                                "line_ranges": line_ranges_by_doc,
                             }
                         ),
                     }
@@ -947,6 +975,8 @@ class ChatEngine:
             usage=usage,
             model=model,
             memories_used=memories_snapshot,
+            kb_sources=kb_snapshot,
+            kb_line_ranges=kb_line_ranges_snapshot,
         )
         await self.db.commit()
 

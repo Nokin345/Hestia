@@ -50,6 +50,8 @@ class Message(Base):
     tool_results: Mapped[str | None] = mapped_column(Text, nullable=True)
     usage: Mapped[str | None] = mapped_column(Text, nullable=True)
     memories_used: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kb_sources: Mapped[str | None] = mapped_column(Text, nullable=True)
+    kb_line_ranges: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=now)
 

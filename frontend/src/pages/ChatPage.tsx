@@ -18,6 +18,7 @@ interface ActiveMessage extends Message {
   temp: boolean
   retrievedMemories?: RetrievedMemory[]
   retrievedKb?: KbSource[]
+  kbLineRanges?: Record<string, [number, number][]>
 }
 
 type Attachment = { url: string; mime: string; name?: string; text?: string }
@@ -77,10 +78,12 @@ export default function ChatPage() {
   // URL change to ?c=...) without losing the pill.
   const retrievedStoreRef = useRef<Record<string, RetrievedMemory[]>>({})
   const kbStoreRef = useRef<Record<string, KbSource[]>>({})
+  const kbLineRangesRef = useRef<Record<string, Record<string, [number, number][]>>>({})
   const reattachRetrieved = useCallback(
     (list: Message[]): ActiveMessage[] => {
       const store = retrievedStoreRef.current
       const kbs = kbStoreRef.current
+      const lineRanges = kbLineRangesRef.current
       const merged = list.map((m) => {
         const active = { ...m, temp: false } as ActiveMessage
         // Prefer the persisted server snapshot (survives reload).
@@ -89,8 +92,15 @@ export default function ChatPage() {
         } else if (m.role === 'assistant' && store[m.id]) {
           active.retrievedMemories = store[m.id]
         }
-        if (m.role === 'assistant' && kbs[m.id]) {
+        if (m.kb_sources && m.kb_sources.length) {
+          active.retrievedKb = m.kb_sources as KbSource[]
+        } else if (m.role === 'assistant' && kbs[m.id]) {
           active.retrievedKb = kbs[m.id]
+        }
+        if (m.kb_line_ranges) {
+          active.kbLineRanges = m.kb_line_ranges as Record<string, [number, number][]>
+        } else if (m.role === 'assistant' && lineRanges[m.id]) {
+          active.kbLineRanges = lineRanges[m.id]
         }
         return active
       })
@@ -115,6 +125,19 @@ export default function ChatPage() {
           for (let i = merged.length - 1; i >= 0; i--) {
             if (merged[i].role === 'assistant') {
               merged[i].retrievedKb = latest as KbSource[]
+              break
+            }
+          }
+        }
+      }
+      if (Object.keys(lineRanges).length > 0) {
+        const entries = Object.entries(lineRanges)
+        const [, latest] = entries[entries.length - 1]
+        const hasAny = merged.some((m) => m.kbLineRanges)
+        if (!hasAny) {
+          for (let i = merged.length - 1; i >= 0; i--) {
+            if (merged[i].role === 'assistant') {
+              merged[i].kbLineRanges = latest
               break
             }
           }
@@ -452,11 +475,13 @@ export default function ChatPage() {
         const id = target()
         if (!id) return
         const sources = e.data.sources ?? []
+        const lineRanges = e.data.line_ranges ?? {}
         kbStoreRef.current = { [id]: sources }
+        kbLineRangesRef.current = { [id]: lineRanges }
         setMessages((prev) =>
           prev.map((m) =>
             m.id === id
-              ? { ...m, retrievedKb: sources.length ? sources : undefined }
+              ? { ...m, retrievedKb: sources.length ? sources : undefined, kbLineRanges: Object.keys(lineRanges).length ? lineRanges : undefined }
               : m,
           ),
         )

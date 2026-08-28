@@ -467,17 +467,24 @@ export default function KnowledgeBasesPage() {
             <p className="mt-1 text-xs text-zinc-500">
               Extracted text — what gets chunked and used for retrieval.
             </p>
-            <div className="mt-3 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/60 p-4">
-              {viewError ? (
-                <p className="text-sm text-red-400">{viewError}</p>
-              ) : viewText ? (
-                <pre className="whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-zinc-300">{viewText}</pre>
-              ) : (
-                <p className="flex items-center gap-2 text-sm text-zinc-500">
-                  <Loader2 className="size-4 animate-spin" /> Loading text…
-                </p>
-              )}
-            </div>
+<div className="mt-3 flex-1 overflow-y-auto rounded-lg border border-zinc-800 bg-zinc-950/60">
+                {viewError ? (
+                  <p className="p-4 text-sm text-red-400">{viewError}</p>
+                ) : viewText ? (
+                  <div className="font-mono text-xs leading-relaxed">
+                    {viewText.split('\n').map((line, i) => (
+                      <div key={i} className="flex">
+                        <span className="select-none flex-shrink-0 border-r border-zinc-800 py-0.5 pr-3 text-right text-zinc-600 w-10">{i + 1}</span>
+                        <span className="flex-1 whitespace-pre-wrap break-words py-0.5 pl-3 text-zinc-300">{line}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="flex items-center gap-2 p-4 text-sm text-zinc-500">
+                    <Loader2 className="size-4 animate-spin" /> Loading text…
+                  </p>
+                )}
+              </div>
           </div>
         </div>
       )}

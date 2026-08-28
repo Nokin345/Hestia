@@ -8,6 +8,7 @@ export interface RetrievedMemory {
 export interface KbSource {
   filename: string
   similarity: number
+  line_ranges?: [number, number][]
 }
 
 export type ChatEventData =
@@ -15,7 +16,7 @@ export type ChatEventData =
   | { event: 'delta'; data: { content: string } }
   | { event: 'reasoning'; data: { content: string } }
   | { event: 'memory_retrieved'; data: { count: number; memories?: RetrievedMemory[] } }
-  | { event: 'kb_retrieved'; data: { count: number; sources?: KbSource[] } }
+  | { event: 'kb_retrieved'; data: { count: number; sources?: KbSource[]; line_ranges?: Record<string, [number, number][]> } }
   | { event: 'tool_call'; data: { id: string; name: string; arguments: Record<string, unknown> } }
   | { event: 'tool_result'; data: { name: string; ok: boolean; summary: string } }
   | { event: 'tool'; data: { name: string; ok: boolean; arguments: Record<string, unknown>; content: string } }

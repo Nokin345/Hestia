@@ -155,21 +155,75 @@ class KbVectorStore:
             for doc, meta in zip(res["documents"], res["metadatas"])
         ]
         chunks.sort(key=lambda x: x[0])
-        parts: list[str] = []
-        for _, chunk in chunks:
-            if not chunk:
-                continue
-            if not parts:
-                parts.append(chunk)
-                continue
-            prev = parts[-1]
-            for i in range(min(len(prev), len(chunk), 500), 0, -1):
-                if chunk.startswith(prev[-i:]):
-                    parts.append(chunk[i:])
-                    break
+        from app.core.kb_ingest import join_chunks
+        return join_chunks(chunks)
+
+    def get_line_ranges(
+        self, doc_id: str, chunk_indices: list[int]
+    ) -> list[tuple[int, int]]:
+        """Map chunk indices to line numbers in the full document.
+
+        Returns a list of ``(start_line, end_line)`` tuples, one per continuous
+        group of chunk indices.  Line numbers are 1-indexed.
+        """
+        text = self.get_document_text(doc_id)
+        if not text or not chunk_indices:
+            logger.warning("get_line_ranges: empty text=%s or indices=%s", bool(text), chunk_indices)
+            return []
+
+        from app.core.kb_ingest import CHUNK_OVERLAP, CHUNK_SIZE, join_chunks
+
+        step = CHUNK_SIZE - CHUNK_OVERLAP
+
+        # Fetch full chunk texts for joining
+        res = self._lane.collection.get(
+            where={"doc_id": doc_id},
+            include=["documents", "metadatas"],
+        )
+        all_chunks = {
+            int(meta.get("chunk", 0)): doc or ""
+            for doc, meta in zip(res["documents"], res["metadatas"])
+        }
+
+        # Group into continuous ranges
+        groups: list[list[int]] = []
+        current = [chunk_indices[0]]
+        for idx in chunk_indices[1:]:
+            if idx == current[-1] + 1:
+                current.append(idx)
             else:
-                parts.append(chunk)
-        return "".join(parts)
+                groups.append(current)
+                current = [idx]
+        groups.append(current)
+
+        line_ranges: list[tuple[int, int]] = []
+        for group in groups:
+            chunks = [(i, all_chunks.get(i, "")) for i in group]
+            group_text = join_chunks(chunks)
+            pos = text.find(group_text)
+            if pos >= 0:
+                start_line = text[:pos].count("\n") + 1
+                end_line = text[: pos + len(group_text)].count("\n") + 1
+                logger.warning(
+                    "get_line_ranges doc_id=%s group=%s found at pos=%d lines=%d-%d",
+                    doc_id, group, pos, start_line, end_line,
+                )
+            else:
+                # Fallback: calculate from chunk index
+                start_pos = group[0] * step
+                end_pos = group[-1] * step + CHUNK_SIZE
+                start_line = text[: min(start_pos, len(text))].count("\n") + 1
+                end_line = text[: min(end_pos, len(text))].count("\n") + 1
+                logger.warning(
+                    "get_line_ranges doc_id=%s group=%s NOT found via str.find, "
+                    "fallback pos=%d lines=%d-%d | group_text[:100]=%r | "
+                    "text at start_pos[:100]=%r",
+                    doc_id, group, start_pos, start_line, end_line,
+                    group_text[:100],
+                    text[start_pos:start_pos + 100],
+                )
+            line_ranges.append((start_line, end_line))
+        return line_ranges
 
     def search(
         self,
