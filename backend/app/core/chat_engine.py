@@ -670,24 +670,40 @@ class ChatEngine:
                     else []
                 )
                 if results:
+                    match_count = sum(1 for r in results if r.get("role") == "match")
                     rag_sources = [
                         {
                             "filename": r["metadata"].get("filename", "unknown"),
                             "similarity": r.get("similarity", 0.0),
+                            "role": r.get("role", "match"),
                         }
                         for r in results
                     ]
-                    rag_content = "Relevant documents:\n\n" + "\n\n---\n\n".join(
-                        f"[{s['filename']}]\n{r['document']}"
-                        for s, r in zip(rag_sources, results)
-                    )
+
+                    # Group by document, show chunks in order
+                    doc_groups: dict[str, list[dict]] = {}
+                    for r in results:
+                        fn = r["metadata"].get("filename", "unknown")
+                        doc_groups.setdefault(fn, []).append(r)
+
+                    parts: list[str] = []
+                    for fn, chunks in doc_groups.items():
+                        block = f"[{fn}]"
+                        for c in chunks:
+                            role = c.get("role", "match")
+                            chunk_i = c["metadata"].get("chunk", 0)
+                            label = f"chunk {chunk_i}" if role == "match" else f"context {chunk_i}"
+                            block += f"\n\n[{label}]\n{c['document']}"
+                        parts.append(block)
+
+                    rag_content = "Relevant documents:\n\n" + "\n\n---\n\n".join(parts)
                     if len(rag_content) > 10000:
                         rag_content = rag_content[:10000] + "\n[Truncated]"
                     yield {
                         "event": "kb_retrieved",
                         "data": json.dumps(
                             {
-                                "count": len(results),
+                                "count": match_count,
                                 "sources": rag_sources,
                             }
                         ),

@@ -109,14 +109,14 @@ _STOPWORDS = frozenset(
 
 
 def _content_words(text: str) -> list[str]:
-    """Meaningful content words: stopwords removed, min len 3 (odysseus-style)."""
+    """Meaningful content words: stopwords removed."""
     return [
         w
         for w in re.findall(
             r"[a-z0-9\u4e00-\u9fff]+(?:[-_][a-z0-9\u4e00-\u9fff]+)*",
             text.lower(),
         )
-        if len(w) >= 3 and w not in _STOPWORDS
+        if w not in _STOPWORDS
     ]
 
 
