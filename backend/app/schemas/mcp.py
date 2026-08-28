@@ -18,6 +18,7 @@ class McpServerCreate(BaseModel):
     auth_token: str = ""
     headers: list[McpHeader] = Field(default_factory=list)
     enabled: bool = True
+    disabled_tools: list[str] = Field(default_factory=list)
 
 
 class McpServerUpdate(BaseModel):
@@ -29,6 +30,7 @@ class McpServerUpdate(BaseModel):
     auth_token: str | None = None
     headers: list[McpHeader] | None = None
     enabled: bool | None = None
+    disabled_tools: list[str] | None = None
 
 
 class McpServerOut(BaseModel):
@@ -39,6 +41,7 @@ class McpServerOut(BaseModel):
     auth_token: str
     headers: list[McpHeader] = Field(default_factory=list)
     enabled: bool
+    disabled_tools: list[str] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

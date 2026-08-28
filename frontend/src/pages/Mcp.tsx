@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Check, FlaskConical, PlugZap, Plus, Save, Trash2, X } from 'lucide-react'
+import { Check, ChevronDown, FlaskConical, PlugZap, Plus, Save, Trash2, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { apiDelete, apiFetch, apiPatch, apiPost } from '../api/client'
-import type { McpHeader, McpServer, McpServerTestResult } from '../api/types'
+import type { McpHeader, McpServer, McpServerTestResult, McpToolDef } from '../api/types'
 import { Layout } from '../components/layout/Layout'
 import { Button, ConfirmDialog, Input } from '../components/ui'
 
@@ -68,6 +68,10 @@ export function McpPage() {
   const [testResult, setTestResult] = useState<McpServerTestResult | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<McpServer | null>(null)
   const [notice, setNotice] = useState('')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [serverTools, setServerTools] = useState<Record<string, McpToolDef[]>>({})
+  const [loadingTools, setLoadingTools] = useState<string | null>(null)
+  const [togglingTool, setTogglingTool] = useState<string | null>(null)
 
   useEffect(() => {
     if (notice) {
@@ -171,13 +175,68 @@ export function McpPage() {
     }
   }
 
-  const toggleEnabled = async (s: McpServer) => {
+  const fetchTools = async (serverId: string) => {
+    if (serverTools[serverId]) return
+    setLoadingTools(serverId)
     try {
-      await apiPatch<McpServer>(`/mcp/servers/${s.id}`, { enabled: !s.enabled })
+      const tools = await apiFetch<McpToolDef[]>(`/mcp/servers/${serverId}/tools`)
+      setServerTools((prev) => ({ ...prev, [serverId]: tools }))
+    } catch {
+      setServerTools((prev) => ({ ...prev, [serverId]: [] }))
+    } finally {
+      setLoadingTools(null)
+    }
+  }
+
+  const toggleExpand = (serverId: string) => {
+    if (expandedId === serverId) {
+      setExpandedId(null)
+    } else {
+      setExpandedId(serverId)
+      void fetchTools(serverId)
+    }
+  }
+
+  const toggleServer = async (s: McpServer) => {
+    const tools = serverTools[s.id]
+    const disabled = new Set(s.disabled_tools)
+    const allDisabled = tools && tools.length > 0 && tools.every((t) => disabled.has(t.raw_name))
+    const isEffectivelyOn = s.enabled && !allDisabled
+
+    try {
+      if (isEffectivelyOn) {
+        await apiPatch<McpServer>(`/mcp/servers/${s.id}`, { enabled: false })
+      } else {
+        await apiPatch<McpServer>(`/mcp/servers/${s.id}`, { enabled: true, disabled_tools: [] })
+      }
       await queryClient.invalidateQueries({ queryKey: ['mcp-servers'] })
       await queryClient.invalidateQueries({ queryKey: ['mcp-all-tools'] })
     } catch (e) {
       setError((e as Error).message)
+    }
+  }
+
+  const toggleTool = async (s: McpServer, toolRawName: string) => {
+    const disabled = new Set(s.disabled_tools)
+    const isEnabled = !disabled.has(toolRawName)
+    const key = `${s.id}:${toolRawName}`
+    setTogglingTool(key)
+    try {
+      const next = new Set(disabled)
+      if (isEnabled) {
+        next.add(toolRawName)
+      } else {
+        next.delete(toolRawName)
+      }
+      await apiPatch<McpServer>(`/mcp/servers/${s.id}`, {
+        disabled_tools: [...next],
+      })
+      await queryClient.invalidateQueries({ queryKey: ['mcp-servers'] })
+      await queryClient.invalidateQueries({ queryKey: ['mcp-all-tools'] })
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setTogglingTool(null)
     }
   }
 
@@ -207,48 +266,124 @@ export function McpPage() {
               No MCP servers configured yet. Add one below.
             </div>
           )}
-          {servers?.map((s) => (
-            <div
-              key={s.id}
-              className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900/60 px-3 py-2.5"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-zinc-100">{s.name}</span>
-                  <TransportBadge transport={s.transport} />
+          {servers?.map((s) => {
+            const tools = serverTools[s.id]
+            const disabled = new Set(s.disabled_tools)
+            const allDisabled = tools && tools.length > 0 && tools.every((t) => disabled.has(t.raw_name))
+            const isEffectivelyOn = s.enabled && !allDisabled
+            const isExpanded = expandedId === s.id
+
+            return (
+              <div key={s.id} className="rounded-lg border border-zinc-800 bg-zinc-900/60">
+                <div className="flex items-center gap-3 px-3 py-2.5">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(s.id)}
+                    className="shrink-0 rounded-md p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+                    title={isExpanded ? 'Collapse tools' : 'Expand tools'}
+                  >
+                    <ChevronDown
+                      className={clsx('size-4 transition-transform', isExpanded && 'rotate-180')}
+                    />
+                  </button>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-zinc-100">{s.name}</span>
+                      <TransportBadge transport={s.transport} />
+                    </div>
+                    <p className="truncate text-xs text-zinc-500">{s.url}</p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isEffectivelyOn}
+                    onClick={() => void toggleServer(s)}
+                    title={
+                      isEffectivelyOn
+                        ? 'Enabled — click to disable'
+                        : 'Disabled — click to enable'
+                    }
+                    className={clsx(
+                      'flex h-6 w-11 shrink-0 items-center rounded-full px-0.5 transition-colors',
+                      isEffectivelyOn ? 'bg-emerald-600 justify-end' : 'bg-zinc-700 justify-start',
+                    )}
+                  >
+                    <span className="size-5 rounded-full bg-white shadow" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => startEdit(s)}
+                    className="rounded-md px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmDelete(s)}
+                    className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                    title="Delete server"
+                  >
+                    <Trash2 className="size-4" />
+                  </button>
                 </div>
-                <p className="truncate text-xs text-zinc-500">{s.url}</p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={s.enabled}
-                onClick={() => toggleEnabled(s)}
-                title={s.enabled ? 'Enabled — click to disable' : 'Disabled — click to enable'}
-                className={clsx(
-                  'flex h-6 w-11 shrink-0 items-center rounded-full px-0.5 transition-colors',
-                  s.enabled ? 'bg-emerald-600 justify-end' : 'bg-zinc-700 justify-start',
+
+                {isExpanded && (
+                  <div className="border-t border-zinc-800 px-3 py-2">
+                    {loadingTools === s.id && (
+                      <p className="py-2 text-center text-xs text-zinc-500">Loading tools...</p>
+                    )}
+                    {tools && tools.length === 0 && (
+                      <p className="py-2 text-center text-xs text-zinc-600">No tools available.</p>
+                    )}
+                    {tools && tools.length > 0 && (
+                      <div className="space-y-1">
+                        {tools.map((t) => {
+                          const isOn = s.enabled && !disabled.has(t.raw_name)
+                          const isToggling = togglingTool === `${s.id}:${t.raw_name}`
+                          return (
+                            <div
+                              key={t.raw_name}
+                              className={clsx(
+                                'flex items-center gap-2 rounded-lg border px-2.5 py-2 transition-colors',
+                                isOn
+                                  ? 'border-zinc-700/60 bg-zinc-800/40'
+                                  : 'border-zinc-800/40 bg-zinc-900/60 opacity-60',
+                              )}
+                            >
+                              <button
+                                type="button"
+                                role="switch"
+                                aria-checked={isOn}
+                                disabled={!s.enabled || isToggling}
+                                onClick={() => void toggleTool(s, t.raw_name)}
+                                className={clsx(
+                                  'flex h-5 w-9 shrink-0 items-center rounded-full px-0.5 transition-colors',
+                                  isOn ? 'bg-emerald-600 justify-end' : 'bg-zinc-700 justify-start',
+                                  (!s.enabled || isToggling) && 'cursor-not-allowed opacity-50',
+                                )}
+                              >
+                                <span className="size-3.5 rounded-full bg-white shadow" />
+                              </button>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2">
+                                  <code className="text-xs text-emerald-300">{t.raw_name}</code>
+                                </div>
+                                {t.description && (
+                                  <p className="mt-0.5 truncate text-[11px] leading-snug text-zinc-500">
+                                    {t.description}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </div>
                 )}
-              >
-                <span className="size-5 rounded-full bg-white shadow" />
-              </button>
-              <button
-                type="button"
-                onClick={() => startEdit(s)}
-                className="rounded-md px-2 py-1 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(s)}
-                className="rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
-                title="Delete server"
-              >
-                <Trash2 className="size-4" />
-              </button>
-            </div>
-          ))}
+              </div>
+            )
+          })}
         </div>
 
         {/* Add / edit form */}

@@ -39,6 +39,13 @@ def _headers_for(server: McpServer) -> dict[str, str]:
     return _headers_dict(server.auth_token, pairs)
 
 
+def _disabled_tools(server: McpServer) -> set[str]:
+    try:
+        return set(json.loads(server.disabled_tools_json or "[]"))
+    except (json.JSONDecodeError, TypeError):
+        return set()
+
+
 def _cache_key(server: McpServer) -> str:
     return f"{server.id}:{server.url}:{server.transport}"
 
@@ -174,8 +181,11 @@ async def list_all_mcp_tools(
     servers = list(res.scalars().all())
     results: list[McpToolOut] = []
     for server in servers:
+        disabled = _disabled_tools(server)
         try:
-            results.extend(await list_mcp_tools(server))
+            for tool in await list_mcp_tools(server):
+                if tool.raw_name not in disabled:
+                    results.append(tool)
         except Exception as exc:
             logger.warning("MCP: failed to list tools for '%s': %s", server.name, exc)
     if tool_names:

@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import UTC, datetime
 
@@ -24,8 +25,16 @@ class McpServer(Base):
     url: Mapped[str] = mapped_column(String(500))
     auth_token: Mapped[str] = mapped_column(Text, default="")
     headers_json: Mapped[str] = mapped_column(Text, default="[]")
+    disabled_tools_json: Mapped[str] = mapped_column(Text, default="[]")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(TZDateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(
         TZDateTime, default=now, onupdate=now
     )
+
+    @property
+    def disabled_tools(self) -> list[str]:
+        try:
+            return json.loads(self.disabled_tools_json or "[]")
+        except (json.JSONDecodeError, TypeError):
+            return []

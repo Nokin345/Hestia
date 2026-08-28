@@ -59,6 +59,9 @@ def _migrate_sqlite(sync_conn) -> None:
             "system_prompt": "TEXT DEFAULT ''",
             "temperature": "FLOAT DEFAULT 0.7",
         },
+        "mcp_servers": {
+            "disabled_tools_json": "TEXT DEFAULT '[]'",
+        },
     }
     for table, columns in additions.items():
         existing = {

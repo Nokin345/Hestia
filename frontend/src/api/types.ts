@@ -111,6 +111,7 @@ export interface McpServer {
   auth_token: string
   headers: McpHeader[]
   enabled: boolean
+  disabled_tools: string[]
   created_at: string
   updated_at: string
 }

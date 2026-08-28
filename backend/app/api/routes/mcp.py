@@ -36,6 +36,10 @@ def _serialize_headers(headers):
     )
 
 
+def _serialize_disabled_tools(tools: list[str]) -> str:
+    return json.dumps(tools, ensure_ascii=False)
+
+
 @router.get("/servers", response_model=list[McpServerOut])
 async def list_servers(db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(McpServer).order_by(McpServer.name))
@@ -50,6 +54,7 @@ async def create_server(body: McpServerCreate, db: AsyncSession = Depends(get_db
         url=body.url.strip().rstrip("/"),
         auth_token=body.auth_token or "",
         headers_json=_serialize_headers(body.headers),
+        disabled_tools_json=_serialize_disabled_tools(body.disabled_tools),
         enabled=body.enabled,
     )
     db.add(server)
@@ -76,6 +81,8 @@ async def patch_server(
         server.auth_token = data["auth_token"] or ""
     if "headers" in data:
         server.headers_json = _serialize_headers(data["headers"])
+    if "disabled_tools" in data:
+        server.disabled_tools_json = _serialize_disabled_tools(data["disabled_tools"])
     if "enabled" in data:
         server.enabled = data["enabled"]
     invalidate_mcp_cache(server_id)
