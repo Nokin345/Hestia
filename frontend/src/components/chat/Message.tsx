@@ -200,10 +200,11 @@ export function isPendingToolBubble(b: AssistantBubble): boolean {
 
 // remark-math allows spaces inside `$...$` spans, so currency amounts like
 // "$5 and $10" would otherwise be swallowed as math. Before the markdown
-// parser sees the text, escape a `$` that is immediately followed by a digit
-// (currency) so it survives as literal text, while genuine formulas such as
-// `$C_5–C_{12}$` still parse as math. Fenced code blocks and inline code
-// spans are masked out first so dollars inside code are never escaped.
+// parser sees the text, first mask all paired `$...$` spans that contain
+// math-like content (LaTeX commands, operators, or multiple word chars).
+// Then escape every remaining `$` — these are guaranteed to be currency.
+// Genuine formulas such as `$C_5–C_{12}$`, `$0^3$`, `$5.50$`, `$2025 =$`,
+// or `$\frac{1}{2}$` are left untouched.
 function protectCurrency(raw: string): string {
   const protectedBlocks: string[] = []
   const mask = (m: string) => {
@@ -213,7 +214,19 @@ function protectCurrency(raw: string): string {
   let out = raw.replace(/```[\s\S]*?```/g, mask)
   out = out.replace(/`[^`]*`/g, mask)
   out = out.replace(/\$\$[\s\S]*?\$\$/g, mask)
-  out = out.replace(/\$(?=\d)/g, '\\$')
+  // Mask paired $...$ spans whose content looks like math
+  out = out.replace(/\$[^$]*?\$/g, (m) => {
+    const inner = m.slice(1, -1)
+    // LaTeX commands, operators, or grouping → math
+    if (/[\\^_{}=+*\/()\[\]]/.test(inner)) return mask(m)
+    // Single letter variable (e.g. $E$, $x$) → math
+    if (/^[A-Za-z]+$/.test(inner)) return mask(m)
+    // Long content → likely math
+    if (inner.length > 20) return mask(m)
+    return m
+  })
+  // Every remaining $ is now currency — escape it
+  out = out.replace(/\$/g, '\\$')
   return out.replace(/\u0000(\d+)\u0000/g, (_, i) => protectedBlocks[Number(i)])
 }
 
