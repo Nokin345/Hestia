@@ -104,19 +104,19 @@ async def upload_kb_document(
                     "mime": mime,
                     "is_pdf": is_pdf,
                     "total_pages": total_pages,
-                    "ocr_backend": ocr_backend,
-                    "ocr_model": ocr_model,
                 },
             )
 
             ocr_pages = 0
+            methods: set[str] = set()
             parts: list[str] = []
             if is_pdf:
                 for i in range(total_pages):
-                    page_text, used_ocr = await loop.run_in_executor(
+                    page_text, method = await loop.run_in_executor(
                         None, extract_pdf_page, reader, path, i, ocr, ocr_backend
                     )
-                    if used_ocr:
+                    methods.add(method)
+                    if method.startswith("ocr"):
                         ocr_pages += 1
                     if page_text.strip():
                         parts.append(page_text.strip())
@@ -127,7 +127,10 @@ async def upload_kb_document(
                 text = "\n\n".join(parts)
             else:
                 text = extract_text(path, mime, ocr=None, ocr_backend="")
+                methods.add("plain")
                 yield _sse("progress", {"current": 1, "total": 1, "ocr_pages": 0})
+
+            extraction_method = ", ".join(sorted(methods - {"none"})) or "none"
 
             chunks = split_chunks(text)
 
@@ -137,6 +140,7 @@ async def upload_kb_document(
                 path=f"kb/{stored_name}",
                 chunk_count=len(chunks),
                 text_preview=chunks[0][:200] if chunks else "",
+                extraction_method=extraction_method,
             )
             db.add(doc)
             await db.commit()
@@ -165,6 +169,7 @@ async def upload_kb_document(
                     "ocr_backend": ocr_backend,
                     "ocr_model": ocr_model,
                     "ocr_pages": ocr_pages,
+                    "extraction_method": extraction_method,
                 },
             )
         except Exception as e:
@@ -190,6 +195,7 @@ async def list_kb_documents(db: AsyncSession = Depends(get_db)):
                 "chunk_count": d.chunk_count,
                 "enabled": d.enabled,
                 "preview": d.text_preview,
+                "extraction_method": d.extraction_method,
                 "created_at": d.created_at.isoformat(),
                 "url": f"/uploads/{d.path}",
             }

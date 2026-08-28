@@ -229,6 +229,7 @@ export interface KbDocument {
   chunk_count: number
   enabled: boolean
   preview: string
+  extraction_method: string
   created_at: string
   url: string
 }

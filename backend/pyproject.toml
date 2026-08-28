@@ -24,7 +24,7 @@ dependencies = [
     "fastembed>=0.3.5",
     "pypdf>=4.0.0",
     "pymupdf>=1.24.0",
-    "rapidocr-onnxruntime>=1.3.20",
+    "rapidocr>=3.9.2",
     "mcp>=1.28,<2",
 ]
 

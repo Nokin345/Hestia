@@ -69,39 +69,46 @@ class RemoteOcrClient:
 
 
 class LocalOcrClient:
-    """Local CPU OCR via RapidOCR (ONNX runtime + PaddleOCR models).
+    """Local CPU OCR via RapidOCR (PP-OCRv6, ONNX, multilingual).
 
     Downloads small ONNX models on first use, then runs entirely offline.
-    Default PP-OCR models handle Latin + CJK text (multilingual enough for
-    common scanned documents).
+    The PP-OCRv6 multilingual model handles Latin, CJK, and many other scripts.
     """
 
     _engine = None
 
-    def __init__(self, lang: str = "ch"):
-        self.lang = lang
-        self.model = "RapidOCR (PP-OCRv4, ONNX)"
+    def __init__(self):
+        self.model = "RapidOCR (PP-OCRv6, ONNX, MULTI)"
         self._load()
 
     def _load(self) -> None:
         if LocalOcrClient._engine is not None:
             return
         try:
-            from rapidocr_onnxruntime import RapidOCR
+            from rapidocr import RapidOCR, EngineType, LangDet, LangRec, ModelType, OCRVersion
         except ImportError:
             raise RuntimeError(
-                "rapidocr is not installed. Install it (pip install rapidocr_onnxruntime) "
+                "rapidocr is not installed. Install it (pip install rapidocr) "
                 "or configure a remote OCR endpoint."
             )
-        LocalOcrClient._engine = RapidOCR()
-        logger.info("RapidOCR loaded (CPU)")
+        LocalOcrClient._engine = RapidOCR(params={
+            "Global.use_cls": False,
+            "Det.engine_type": EngineType.ONNXRUNTIME,
+            "Det.lang_type": LangDet.EN,
+            "Det.model_type": ModelType.SMALL,
+            "Det.ocr_version": OCRVersion.PPOCRV6,
+            "Rec.engine_type": EngineType.ONNXRUNTIME,
+            "Rec.lang_type": LangRec.CH,
+            "Rec.model_type": ModelType.SMALL,
+            "Rec.ocr_version": OCRVersion.PPOCRV6,
+        })
+        logger.info("RapidOCR loaded (CPU, PP-OCRv6)")
 
     def extract(self, image_path: str, prompt: str = "") -> str:
-        result, _elapsed = LocalOcrClient._engine(str(image_path))
-        if not result:
+        output = LocalOcrClient._engine(str(image_path))
+        if not output or not output.txts:
             return ""
-        lines = [str(item[1]) for item in result if item and len(item) > 1]
-        return "\n".join(lines).strip()
+        return "\n".join(output.txts).strip()
 
 
 def build_ocr_client(cfg: OcrConfig):

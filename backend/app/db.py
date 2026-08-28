@@ -47,6 +47,7 @@ def _migrate_sqlite(sync_conn) -> None:
         },
         "kb_documents": {
             "enabled": "BOOLEAN DEFAULT 1",
+            "extraction_method": "VARCHAR(50) DEFAULT ''",
         },
         "conversations": {
             "pinned": "BOOLEAN DEFAULT 0",

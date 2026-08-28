@@ -381,8 +381,8 @@ export default function KnowledgeBasesPage() {
                           disabled
                         </span>
                       )}
-                      {d.preview && (
-                        <span className="truncate max-w-64 text-zinc-500">{d.preview}…</span>
+                      {d.extraction_method && (
+                        <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-zinc-400">{d.extraction_method}</span>
                       )}
                     </div>
                   </div>
