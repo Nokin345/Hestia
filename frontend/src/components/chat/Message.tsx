@@ -710,10 +710,18 @@ export function EditBox({
   align?: 'right' | 'left'
 }) {
   const rounded = align === 'right' ? 'rounded-br-md' : 'rounded-bl-md'
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [value])
   return (
-    <div className={`flex ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
+    <div className={`flex w-full ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
       <div className={`w-full ${align === 'right' ? 'max-w-[85%]' : 'max-w-[90%]'}`}>
         <textarea
+          ref={textareaRef}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => {
@@ -723,8 +731,9 @@ export function EditBox({
             }
           }}
           autoFocus
-          rows={Math.min(8, Math.max(1, value.split('\n').length))}
-          className={`max-h-60 w-full resize-none rounded-2xl ${rounded} border border-indigo-700/50 bg-zinc-900 px-4 py-2.5 text-sm text-white outline-none focus:border-indigo-600`}
+          rows={1}
+          className={`w-full resize-none overflow-y-auto rounded-2xl ${rounded} border border-indigo-700/50 bg-zinc-900 px-4 py-2.5 text-sm text-white outline-none focus:border-indigo-600`}
+          style={{ maxHeight: '5rem' }}
         />
         <div className={`mt-1.5 flex gap-2 ${align === 'right' ? 'justify-end' : 'justify-start'}`}>
           <Button variant="ghost" size="sm" onClick={onCancel}>
@@ -1002,7 +1011,13 @@ export function AssistantTurn({
       bubbleEls.push(el)
     })
   }
-  if (lastAssistant?.error) {
+  if (lastAssistant?.error === "interrupted") {
+    bubbleEls.push(
+      <div key="interrupted" className="mt-1 text-[11px] text-zinc-500">
+        Interrupted
+      </div>,
+    )
+  } else if (lastAssistant?.error) {
     bubbleEls.push(<ErrorBubble key="error" message={lastAssistant.error} />)
   }
 

@@ -342,7 +342,7 @@ export function Sidebar({ currentConversationId, onSelectConversation, onNewChat
                           currentConversationId === c.id && 'bg-zinc-900 text-zinc-100',
                         )}
                       >
-                        <span className="inline-flex items-center gap-1.5">
+                        <span className="inline-flex min-w-0 items-center gap-1.5">
                           {c.pinned && <Pin className="size-3 shrink-0 text-indigo-400" />}
                           <span className="truncate">{c.title}</span>
                         </span>
@@ -353,7 +353,7 @@ export function Sidebar({ currentConversationId, onSelectConversation, onNewChat
                             e.stopPropagation()
                             setMenuFor(menuFor === c.id ? null : c.id)
                           }}
-                          className="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded p-0.5 text-zinc-500 hover:text-zinc-200 group-hover:block"
+                          className="absolute right-2 top-1/2 hidden -translate-y-1/2 rounded p-0.5 text-zinc-500 hover:text-zinc-200 pointer-coarse:block group-hover:block"
                           title="Options"
                         >
                           <MoreHorizontal className="size-4" />

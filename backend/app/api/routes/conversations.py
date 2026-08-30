@@ -167,6 +167,28 @@ async def list_messages(conversation_id: str, db: AsyncSession = Depends(get_db)
     return [_message_out(row) for row in result.scalars().all()]
 
 
+@router.post("/{conversation_id}/messages/partial")
+async def save_partial_message(
+    conversation_id: str,
+    body: list[MessagePart],
+    db: AsyncSession = Depends(get_db),
+):
+    conv = await db.get(Conversation, conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    msg = Message(
+        conversation_id=conversation_id,
+        role="assistant",
+        content=parts_to_json(body),
+        model=conv.model,
+        error="interrupted",
+    )
+    db.add(msg)
+    await db.commit()
+    await db.refresh(msg)
+    return _message_out(msg)
+
+
 @router.patch(
     "/{conversation_id}/messages/{message_id}", response_model=MessageOut
 )
@@ -254,7 +276,10 @@ async def regenerate_after(
     if not content:
         raise HTTPException(status_code=422, detail="Message cannot be empty")
 
-    msg.content = parts_to_json([MessagePart(type="text", text=content)])
+    user_parts = list(body.parts)
+    if body.content and not any(p.text == body.content for p in user_parts):
+        user_parts.insert(0, MessagePart(type="text", text=body.content))
+    msg.content = parts_to_json(user_parts)
 
     ordered = (
         await db.execute(

@@ -56,6 +56,9 @@ export default function ChatPage() {
   const [modelKey, setModelKey] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState('')
+  const [editingAttachments, setEditingAttachments] = useState<
+    { url: string; mime: string; name?: string; text?: string }[]
+  >([])
   const [reasoning, setReasoning] = useState<boolean>(true)
   const [searchEnabled, setSearchEnabled] = useState<boolean>(false)
   const [codeEnabled, setCodeEnabled] = useState<boolean>(false)
@@ -71,6 +74,31 @@ export default function ChatPage() {
   const [attaching, setAttaching] = useState(false)
   const [dragging, setDragging] = useState(false)
   const attachInputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null)
+
+  const acquireWakeLock = useCallback(async () => {
+    try {
+      const lock = await navigator.wakeLock.request('screen')
+      wakeLockRef.current = lock
+      lock.addEventListener('release', () => {
+        wakeLockRef.current = null
+      })
+    } catch {
+      // Wake lock not supported or denied
+    }
+  }, [])
+
+  const releaseWakeLock = useCallback(() => {
+    wakeLockRef.current?.release().catch(() => {})
+    wakeLockRef.current = null
+  }, [])
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [input])
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // Keep the most recent retrieved-memory set in a ref so it can be reattached
@@ -366,19 +394,34 @@ export default function ChatPage() {
   }, [messages])
 
   const stop = useCallback(() => {
-    abortRef.current?.abort()
     const convId = searchParams.get('c') || realConvIdRef.current
-    if (!convId) return
-    // Land the user on the real conversation so they can edit/regenerate. For a
-    // brand-new chat this is where `?c=` finally appears (not during streaming).
-    if (searchParams.get('c') !== convId) {
-      setSearchParams({ c: convId }, { replace: true })
+    const aiId = aiIdRef.current
+    if (aiId && convId) {
+      setMessages((prev) => {
+        const m = prev.find((msg) => msg.id === aiId)
+        if (m) {
+          const textParts = m.parts.filter(
+            (p) => p.type === 'text' || p.type === 'reasoning',
+          )
+          if (textParts.length > 0) {
+            apiPost(`/conversations/${convId}/messages/partial`, textParts).catch(
+              () => {},
+            )
+          }
+        }
+        return prev
+      })
     }
-    // The backend saved the user message at request start; this refetch swaps
-    // the temp bubbles for the stored history (dismissing the partial answer).
+    abortRef.current?.abort()
+    if (!convId) return
     window.setTimeout(() => {
       apiFetch<Message[]>(`/conversations/${convId}/messages`)
-        .then((list) => setMessages(reattachRetrieved(list)))
+        .then((list) => {
+          setMessages(reattachRetrieved(list))
+          if (searchParams.get('c') !== convId) {
+            setSearchParams({ c: convId }, { replace: true })
+          }
+        })
         .catch(() => {})
     }, 500)
   }, [searchParams, setSearchParams, reattachRetrieved])
@@ -578,6 +621,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, tempUser, tempAssistant])
       setAttachments([])
       setStreaming(true)
+      void acquireWakeLock()
       aiIdRef.current = tempAssistant.id
 
       const controller = new AbortController()
@@ -612,12 +656,13 @@ export default function ChatPage() {
           )
         }
       } finally {
+        releaseWakeLock()
         setStreaming(false)
         abortRef.current = null
         queryClient.invalidateQueries({ queryKey: ['conversations'] })
       }
     },
-    [conversationId, model, provider, streaming, reasoning, searchEnabled, codeEnabled, mcpTools, kbEnabled, memoryEnabled, systemPrompt, temperature, attachments, queryClient, handleStreamEvent],
+    [conversationId, model, provider, streaming, reasoning, searchEnabled, codeEnabled, mcpTools, kbEnabled, memoryEnabled, systemPrompt, temperature, attachments, queryClient, handleStreamEvent, acquireWakeLock, releaseWakeLock],
   )
 
   const sendEdit = useCallback(
@@ -626,6 +671,7 @@ export default function ChatPage() {
       const content = newText.trim()
       if (!content) return
       setEditingId(null)
+      setEditingAttachments([])
       setInput('')
 
       const tempAssistant: ActiveMessage = {
@@ -647,6 +693,7 @@ export default function ChatPage() {
         return [...prev.slice(0, idx), edited, tempAssistant]
       })
       setStreaming(true)
+      void acquireWakeLock()
       aiIdRef.current = tempAssistant.id
 
       const controller = new AbortController()
@@ -657,6 +704,7 @@ export default function ChatPage() {
           {
             conversation_id: conversationId,
             content,
+            parts: attachmentParts(editingAttachments),
             reasoning,
             search: searchEnabled,
             code: codeEnabled,
@@ -679,12 +727,13 @@ export default function ChatPage() {
           )
         }
       } finally {
+        releaseWakeLock()
         setStreaming(false)
         abortRef.current = null
         queryClient.invalidateQueries({ queryKey: ['conversations'] })
       }
     },
-    [conversationId, model, streaming, reasoning, searchEnabled, codeEnabled, mcpTools, kbEnabled, systemPrompt, temperature, queryClient, handleStreamEvent],
+    [conversationId, model, streaming, reasoning, searchEnabled, codeEnabled, mcpTools, kbEnabled, systemPrompt, temperature, queryClient, handleStreamEvent, editingAttachments, acquireWakeLock, releaseWakeLock],
   )
 
   const startEditMessage = useCallback(
@@ -695,8 +744,18 @@ export default function ChatPage() {
         .filter((p) => p.type === 'text')
         .map((p) => p.text ?? '')
         .join('')
+      const attach = m.parts
+        .filter((p) => p.type !== 'text' && p.type !== 'reasoning')
+        .map((p) => ({
+          url: p.image_url || p.url || '',
+          mime: p.image_mime || 'application/octet-stream',
+          name: p.name || undefined,
+          text: p.text || undefined,
+        }))
+        .filter((a) => a.url)
       setEditingId(messageId)
       setEditingText(text)
+      setEditingAttachments(attach)
     },
     [messages],
   )
@@ -774,14 +833,18 @@ export default function ChatPage() {
           const res = await apiUpload(file, convoId)
           results.push({ url: res.url, mime: res.mime, name: file.name, text: res.text })
         }
-        setAttachments((prev) => [...prev, ...results])
+        if (editingId) {
+          setEditingAttachments((prev) => [...prev, ...results])
+        } else {
+          setAttachments((prev) => [...prev, ...results])
+        }
       } catch (err) {
         alert((err as Error).message)
       } finally {
         setAttaching(false)
       }
     },
-    [conversationId, setSearchParams, queryClient],
+    [conversationId, setSearchParams, queryClient, editingId],
   )
 
   const handleAttachChange = useCallback(
@@ -862,15 +925,68 @@ export default function ChatPage() {
   const renderMessage = (m: ActiveMessage, onDelete?: () => void) => {
     if (m.id === editingId && !streaming) {
       return (
-        <EditBox
-          key={m.id}
-          value={editingText}
-          onChange={setEditingText}
-          onConfirm={() => void sendEdit(m.id, editingText)}
-          onCancel={() => setEditingId(null)}
-          confirmLabel="Send"
-          align="right"
-        />
+        <div key={m.id} className="flex w-full flex-col items-end gap-2">
+          {editingAttachments.length > 0 && (
+            <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
+              {editingAttachments.map((a) => (
+                a.mime.startsWith('image/') ? (
+                  <div key={a.url} className="group relative">
+                    <img
+                      src={a.url}
+                      alt="attachment"
+                      className="size-20 rounded-lg border border-zinc-700 object-cover"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setEditingAttachments((prev) => prev.filter((x) => x.url !== a.url))}
+                      className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-red-600 text-white opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover:opacity-100"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <div key={a.url} className="group relative">
+                    <div className="flex h-20 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-xs text-zinc-300">
+                      <FileText className="size-4 shrink-0 text-indigo-400" />
+                      <span className="max-w-24 truncate">{a.name}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setEditingAttachments((prev) => prev.filter((x) => x.url !== a.url))}
+                      className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-red-600 text-white opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover:opacity-100"
+                    >
+                      <X className="size-3" />
+                    </button>
+                  </div>
+                )
+              ))}
+              <button
+                type="button"
+                onClick={() => attachInputRef.current?.click()}
+                className="flex size-20 items-center justify-center rounded-lg border border-dashed border-zinc-700 text-zinc-500 transition-colors hover:border-zinc-500 hover:text-zinc-300"
+              >
+                <Plus className="size-5" />
+              </button>
+            </div>
+          )}
+          {editingAttachments.length === 0 && (
+            <button
+              type="button"
+              onClick={() => attachInputRef.current?.click()}
+              className="flex items-center gap-1 rounded-lg border border-dashed border-zinc-700 px-3 py-1.5 text-xs text-zinc-500 transition-colors hover:border-zinc-500 hover:text-zinc-300"
+            >
+              <Plus className="size-3.5" /> Attach files
+            </button>
+          )}
+          <EditBox
+            value={editingText}
+            onChange={setEditingText}
+            onConfirm={() => void sendEdit(m.id, editingText)}
+            onCancel={() => { setEditingId(null); setEditingAttachments([]) }}
+            confirmLabel="Send"
+            align="right"
+          />
+        </div>
       )
     }
     return (
@@ -890,7 +1006,7 @@ export default function ChatPage() {
     if (visible.length === 0) return null
     const senderName = visible.find((m) => m.role === 'assistant')?.model || model || 'Assistant'
     const lastId = [...visible].reverse().find((m) => m.role === 'assistant')?.id
-    const turnIds = turn.map((m) => m.id)
+    const assistantIds = rows.map((m) => m.id)
     if (lastId && lastId === editingId && !streaming) {
       return (
         <EditBox
@@ -915,7 +1031,7 @@ export default function ChatPage() {
         expectsReasoning={expectsReasoning}
         activeTool={activeTool}
         onEdit={!streaming && lastId ? () => startEditMessage(lastId) : undefined}
-        onDelete={!streaming ? () => void deleteMessage(turnIds) : undefined}
+        onDelete={!streaming ? () => void deleteMessage(assistantIds) : undefined}
       />
     )
   }
@@ -946,7 +1062,7 @@ export default function ChatPage() {
                 if (first.role === 'user') {
                   return (
                     <Fragment key={first.id}>
-                      {renderMessage(first, turn.length > 1 ? () => void deleteMessage(turn.map((m) => m.id)) : undefined)}
+                      {renderMessage(first, () => void deleteMessage([first.id]))}
                       {renderAssistantTurn(turn)}
                     </Fragment>
                   )
@@ -973,7 +1089,7 @@ export default function ChatPage() {
                         <button
                           type="button"
                           onClick={() => removeAttachment(a.url)}
-                          className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-zinc-300 opacity-0 transition-opacity group-hover:opacity-100"
+                          className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-red-600 text-white opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover:opacity-100"
                         >
                           <X className="size-3" />
                         </button>
@@ -987,7 +1103,7 @@ export default function ChatPage() {
                         <button
                           type="button"
                           onClick={() => removeAttachment(a.url)}
-                          className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-zinc-600 bg-zinc-900 text-zinc-300 opacity-0 transition-opacity group-hover:opacity-100"
+                          className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-red-600 text-white opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover:opacity-100"
                         >
                           <X className="size-3" />
                         </button>
@@ -1110,13 +1226,14 @@ export default function ChatPage() {
                 className="hidden"
               />
               <textarea
+                ref={inputRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={onKeyDown}
                 onPaste={handlePaste}
-                rows={Math.min(6, Math.max(1, input.split('\n').length))}
+                rows={1}
                 placeholder="Message…"
-                className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
+                className="max-h-[5rem] flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-zinc-100 placeholder-zinc-500 outline-none"
               />
               {streaming ? (
                 <Button variant="outline" size="sm" onClick={stop} title="Stop generating">

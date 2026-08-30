@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from app.schemas.common import MessagePart
 
 
 class ConversationCreate(BaseModel):
@@ -58,6 +60,7 @@ class ConversationPatch(BaseModel):
 
 class MessageRegenerateRequest(BaseModel):
     content: str
+    parts: list[MessagePart] = Field(default_factory=list)
     reasoning: bool | None = None
     search: bool | None = None
     code: bool | None = None

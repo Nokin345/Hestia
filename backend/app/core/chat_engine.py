@@ -355,12 +355,14 @@ class ChatEngine:
         memories_used: list[dict[str, Any]] | None = None,
         kb_sources: list[dict[str, Any]] | None = None,
         kb_line_ranges: dict[str, list[list[int]]] | None = None,
+        error: str | None = None,
     ) -> str:
         row = Message(
             conversation_id=conversation_id,
             role=msg.role,
             content=parts_to_json(msg.parts),
             model=model,
+            error=error,
             usage=json.dumps(usage, ensure_ascii=False) if usage else None,
             memories_used=json.dumps(memories_used, ensure_ascii=False)
             if memories_used
@@ -815,128 +817,134 @@ class ChatEngine:
                     )
                     break
 
-        while True:
-            iter_parts: list[MessagePart] = []
-            iter_tool_calls: list[ToolCall] = []
-            params = ProviderCallParams(
-                model=model,
-                system=system,
-                messages=provider_messages,
-                tools=tools,
-                reasoning=reasoning,
-                temperature=temperature if temperature is not None else 0.7,
-            )
-            try:
-                async for event in provider.stream(params):
-                    if event.kind == "error":
-                        yield {
-                            "event": "error",
-                            "data": json.dumps({"message": event.error}),
-                        }
-                        return
-                    if event.kind == "done":
-                        provider_usage = event.usage or {}
-                        continue
-                    if event.kind == "text":
-                        if generation_started is None:
-                            generation_started = time.monotonic()
-                        if iter_parts and iter_parts[-1].type == "text":
-                            iter_parts[-1].text += event.content
-                        else:
-                            iter_parts.append(
-                                MessagePart(type="text", text=event.content)
-                            )
-                        yield {
-                            "event": "delta",
-                            "data": json.dumps({"content": event.content}),
-                        }
-                    elif event.kind == "reasoning":
-                        if generation_started is None:
-                            generation_started = time.monotonic()
-                        if iter_parts and iter_parts[-1].type == "reasoning":
-                            iter_parts[-1].text += event.content
-                        else:
-                            iter_parts.append(
-                                MessagePart(type="reasoning", text=event.content)
-                            )
-                        yield {
-                            "event": "reasoning",
-                            "data": json.dumps({"content": event.content}),
-                        }
-                    elif event.kind == "tool_call" and event.tool_call is not None:
-                        iter_tool_calls.append(event.tool_call)
-                        yield {
-                            "event": "tool_call",
-                            "data": json.dumps(event.tool_call.model_dump()),
-                        }
-            except Exception as exc:
-                yield {
-                    "event": "error",
-                    "data": json.dumps({"message": str(exc)}),
-                }
-                return
-
-            if not iter_tool_calls:
-                assistant_parts = iter_parts
-                break
-
-            any_tool_used = True
-            # Persist the pre-tool assistant turn (its reasoning/text so far).
-            await self._save_message(
-                ChatMessage(
-                    role="assistant", parts=iter_parts, tool_calls=iter_tool_calls
-                ),
-                conversation_id,
-                model=model,
-            )
-
-            # Execute the tools and persist a tool message with the returned content.
-            results: list[dict[str, Any]] = []
-            tool_parts_text: list[str] = []
-            for tc in iter_tool_calls:
+        iter_parts: list[MessagePart] = []
+        iter_tool_calls: list[ToolCall] = []
+        try:
+            while True:
+                iter_parts = []
+                iter_tool_calls = []
+                params = ProviderCallParams(
+                    model=model,
+                    system=system,
+                    messages=provider_messages,
+                    tools=tools,
+                    reasoning=reasoning,
+                    temperature=temperature if temperature is not None else 0.7,
+                )
                 try:
-                    ok, content = await self._execute_tool(tc, conversation_id)
+                    async for event in provider.stream(params):
+                        if event.kind == "error":
+                            yield {
+                                "event": "error",
+                                "data": json.dumps({"message": event.error}),
+                            }
+                            return
+                        if event.kind == "done":
+                            provider_usage = event.usage or {}
+                            continue
+                        if event.kind == "text":
+                            if generation_started is None:
+                                generation_started = time.monotonic()
+                            if iter_parts and iter_parts[-1].type == "text":
+                                iter_parts[-1].text += event.content
+                            else:
+                                iter_parts.append(
+                                    MessagePart(type="text", text=event.content)
+                                )
+                            yield {
+                                "event": "delta",
+                                "data": json.dumps({"content": event.content}),
+                            }
+                        elif event.kind == "reasoning":
+                            if generation_started is None:
+                                generation_started = time.monotonic()
+                            if iter_parts and iter_parts[-1].type == "reasoning":
+                                iter_parts[-1].text += event.content
+                            else:
+                                iter_parts.append(
+                                    MessagePart(type="reasoning", text=event.content)
+                                )
+                            yield {
+                                "event": "reasoning",
+                                "data": json.dumps({"content": event.content}),
+                            }
+                        elif event.kind == "tool_call" and event.tool_call is not None:
+                            iter_tool_calls.append(event.tool_call)
+                            yield {
+                                "event": "tool_call",
+                                "data": json.dumps(event.tool_call.model_dump()),
+                            }
                 except Exception as exc:
-                    ok, content = False, str(exc)
-                results.append(
-                    {"id": tc.id, "name": tc.name, "ok": ok, "content": content}
-                )
-                tool_parts_text.append(_format_tool_message(tc, ok, content))
-                yield {
-                    "event": "tool",
-                    "data": json.dumps(
-                        {
-                            "name": tc.name,
-                            "ok": ok,
-                            "arguments": tc.arguments,
-                            "content": content,
-                        }
+                    yield {
+                        "event": "error",
+                        "data": json.dumps({"message": str(exc)}),
+                    }
+                    return
+
+                if not iter_tool_calls:
+                    assistant_parts = iter_parts
+                    break
+
+                any_tool_used = True
+                # Persist the pre-tool assistant turn (its reasoning/text so far).
+                await self._save_message(
+                    ChatMessage(
+                        role="assistant", parts=iter_parts, tool_calls=iter_tool_calls
                     ),
-                }
-
-            await self._save_message(
-                ChatMessage(
-                    role="tool",
-                    parts=[
-                        MessagePart(type="text", text="\n\n".join(tool_parts_text))
-                    ],
-                    tool_results=results,
-                ),
-                conversation_id,
-                model=model,
-            )
-            await self.db.commit()
-
-            provider_messages.append(
-                ChatMessage(
-                    role="assistant",
-                    parts=list(iter_parts),
-                    tool_calls=iter_tool_calls,
+                    conversation_id,
+                    model=model,
                 )
-            )
-            provider_messages.append(
-                ChatMessage(role="tool", parts=[], tool_results=results)
-            )
+
+                # Execute the tools and persist a tool message with the returned content.
+                results: list[dict[str, Any]] = []
+                tool_parts_text: list[str] = []
+                for tc in iter_tool_calls:
+                    try:
+                        ok, content = await self._execute_tool(tc, conversation_id)
+                    except Exception as exc:
+                        ok, content = False, str(exc)
+                    results.append(
+                        {"id": tc.id, "name": tc.name, "ok": ok, "content": content}
+                    )
+                    tool_parts_text.append(_format_tool_message(tc, ok, content))
+                    yield {
+                        "event": "tool",
+                        "data": json.dumps(
+                            {
+                                "name": tc.name,
+                                "ok": ok,
+                                "arguments": tc.arguments,
+                                "content": content,
+                            }
+                        ),
+                    }
+
+                await self._save_message(
+                    ChatMessage(
+                        role="tool",
+                        parts=[
+                            MessagePart(type="text", text="\n\n".join(tool_parts_text))
+                        ],
+                        tool_results=results,
+                    ),
+                    conversation_id,
+                    model=model,
+                )
+                await self.db.commit()
+
+                provider_messages.append(
+                    ChatMessage(
+                        role="assistant",
+                        parts=list(iter_parts),
+                        tool_calls=iter_tool_calls,
+                    )
+                )
+                provider_messages.append(
+                    ChatMessage(role="tool", parts=[], tool_results=results)
+                )
+
+        except GeneratorExit:
+            raise
 
         if not any_tool_used and not assistant_parts:
             yield {
