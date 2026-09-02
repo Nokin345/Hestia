@@ -14,31 +14,17 @@ from app.providers.image_resolver import resolve_image_to_base64
 from app.schemas.common import ChatMessage, ToolCall
 
 
-class OpenAIProvider(Provider):
-    id = "openai"
-    name = "OpenAI"
+class LlamaCppProvider(Provider):
+    id = "llamacpp"
+    name = "llama.cpp"
 
     def requires_api_key(self) -> bool:
-        return True
+        return False
 
     async def list_models(self) -> list[ProviderModelInfo]:
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.get(f"{self.base_url}/models", headers=self._headers())
-            resp.raise_for_status()
-            data = resp.json()
-        models = []
-        for item in data.get("data", []):
-            mid = item.get("id", "")
-            if not mid:
-                continue
-            models.append(
-                ProviderModelInfo(
-                    id=mid,
-                    name=mid,
-                    context_window=128000 if "gpt-4o" in mid else None,
-                )
-            )
-        return models
+        # llama.cpp doesn't have a standard models endpoint
+        # Return an empty list (user configures model directly)
+        return []
 
     @staticmethod
     def _to_api_content(messages: list[ChatMessage]) -> list[dict[str, Any]]:
@@ -112,6 +98,26 @@ class OpenAIProvider(Provider):
     def _api_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [{"type": "function", "function": tool} for tool in tools]
 
+    async def supports_reasoning(self, model: str) -> bool | None:
+        headers = {}
+        if self.api_key:
+            headers["X-API-Key"] = self.api_key
+        root = self.base_url.rstrip("/")
+        if root.endswith("/v1"):
+            root = root[: -3]
+        candidates = [f"{root}/props", f"{self.base_url}/props"]
+        async with httpx.AsyncClient(timeout=20) as client:
+            for url in candidates:
+                try:
+                    resp = await client.get(url, headers=headers)
+                    if resp.status_code != 200:
+                        continue
+                    template = resp.json().get("chat_template") or ""
+                    return "enable_thinking" in template
+                except Exception:
+                    continue
+        return None
+
     async def stream(
         self, params: ProviderCallParams
     ) -> AsyncIterator[ProviderStreamEvent]:
@@ -130,13 +136,17 @@ class OpenAIProvider(Provider):
         if params.tools:
             body["tools"] = self._api_tools(params.tools)
             body["tool_choice"] = "auto"
+        if params.reasoning is not None:
+            body["chat_template_kwargs"] = {
+                "enable_thinking": bool(params.reasoning)
+            }
 
         tool_calls: dict[int, dict[str, Any]] = {}
         usage: dict[str, Any] = {}
         async with (
             httpx.AsyncClient(timeout=None) as client,
             client.stream(
-                "POST", f"{self.base_url}/chat/completions", headers=self._headers(), json=body
+                "POST", f"{self.base_url}/chat/completions", json=body
             ) as resp,
         ):
             if resp.status_code != 200:
@@ -172,6 +182,19 @@ class OpenAIProvider(Provider):
                         raw_usage.get("completion_tokens")
                         or raw_usage.get("output_tokens")
                     )
+                timings = chunk.get("timings")
+                if timings:
+                    if (
+                        timings.get("prompt_n") is not None
+                        and usage.get("input_tokens") is None
+                    ):
+                        usage["input_tokens"] = timings["prompt_n"]
+                    if timings.get("predicted_n") is not None:
+                        usage["output_tokens"] = timings["predicted_n"]
+                    if timings.get("predicted_per_second"):
+                        usage["tokens_per_second"] = round(
+                            timings["predicted_per_second"], 1
+                        )
                 choices = chunk.get("choices") or []
                 if not choices:
                     continue

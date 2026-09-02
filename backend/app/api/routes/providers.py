@@ -16,6 +16,7 @@ from app.providers.registry import (
 )
 from app.schemas.provider import (
     PROVIDER_TYPE_IDS,
+    PROVIDER_TYPES,
     KEYLESS_TYPES,
     ModelEntry,
     ProviderConfigCreate,
@@ -55,6 +56,12 @@ def _to_model_entry(m: ProviderModel, cfg: ProviderConfig) -> ModelEntry:
 async def list_providers(db: AsyncSession = Depends(get_db)):
     configs = await list_provider_configs(db)
     return [_to_out(cfg) for cfg in configs]
+
+
+@router.get("/types")
+async def list_provider_types():
+    """Return the list of supported provider types."""
+    return PROVIDER_TYPES
 
 
 @router.get("/models", response_model=list[ModelEntry])

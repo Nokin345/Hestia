@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, Search, CheckSquare, Square, RefreshCw, Trash2, Pencil, Check, X, Plug, Server, KeyRound, Plus, Loader2, AlertTriangle, Save, Settings } from 'lucide-react'
 import { apiDelete, apiFetch, apiPatch, apiPost } from '../api/client'
-import type { DefaultsConfig, Provider, ProviderModel, ProviderTestResult, ModelEntry } from '../api/types'
-import { PROVIDER_TYPES } from '../api/types'
+import type { DefaultsConfig, Provider, ProviderModel, ProviderTestResult, ModelEntry, ProviderTypeMeta } from '../api/types'
 import { Layout } from '../components/layout/Layout'
 import { Button, Input } from '../components/ui'
 import { SearchSettings } from '../components/settings/SearchSettings'
@@ -15,6 +14,10 @@ export default function SettingsPage() {
   const { data: providers } = useQuery({
     queryKey: ['providers'],
     queryFn: () => apiFetch<Provider[]>('/providers'),
+  })
+  const { data: providerTypes } = useQuery({
+    queryKey: ['provider-types'],
+    queryFn: () => apiFetch<ProviderTypeMeta[]>('/providers/types'),
   })
   const { data: defaults } = useQuery({
     queryKey: ['defaults'],
@@ -53,7 +56,7 @@ export default function SettingsPage() {
   const [type, setType] = useState('openrouter')
   const [name, setName] = useState('OpenRouter')
   const [apiKey, setApiKey] = useState('')
-  const [baseUrl, setBaseUrl] = useState(PROVIDER_TYPES[0].default_base_url)
+  const [baseUrl, setBaseUrl] = useState(providerTypes?.[0]?.default_base_url ?? '')
   const [editingId, setEditingId] = useState<string | null>(null)
 
   const [testing, setTesting] = useState(false)
@@ -101,13 +104,13 @@ export default function SettingsPage() {
     )
   }
 
-  const typeMeta = PROVIDER_TYPES.find((t) => t.id === type)!
+  const typeMeta = providerTypes?.find((t) => t.id === type)
 
   const resetForm = () => {
     setType('openrouter')
     setName('OpenRouter')
     setApiKey('')
-    setBaseUrl(PROVIDER_TYPES[0].default_base_url)
+    setBaseUrl(providerTypes?.[0]?.default_base_url ?? '')
     setEditingId(null)
     setFormError('')
     setTestResult(null)
@@ -116,16 +119,18 @@ export default function SettingsPage() {
   }
 
   const onTypeChange = (t: string) => {
-    const meta = PROVIDER_TYPES.find((m) => m.id === t)!
+    const meta = providerTypes?.find((m) => m.id === t)
     setType(t)
-    setName(meta.name)
-    setBaseUrl(meta.default_base_url)
+    if (meta) {
+      setName(meta.name)
+      setBaseUrl(meta.default_base_url)
+    }
     setTestResult(null)
     setFormError('')
   }
 
   const startEdit = (p: Provider) => {
-    const meta = PROVIDER_TYPES.find((m) => m.id === p.type)
+    const meta = providerTypes?.find((m) => m.id === p.type)
     setEditingId(p.id)
     setType(p.type)
     setName(p.name)
@@ -512,7 +517,7 @@ export default function SettingsPage() {
                       <div className="flex items-center gap-2">
                         <span className="truncate font-medium text-zinc-100">{p.name}</span>
                         <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-400">
-                          {PROVIDER_TYPES.find((t) => t.id === p.type)?.name ?? p.type}
+                            {providerTypes?.find((t) => t.id === p.type)?.name ?? p.type}
                         </span>
                         <span
                           className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] ${
@@ -537,7 +542,7 @@ export default function SettingsPage() {
                           <KeyRound className="size-3" />{' '}
                           {p.api_key_masked
                             ? p.api_key_masked
-                            : PROVIDER_TYPES.find((t) => t.id === p.type)?.requires_api_key
+                              : providerTypes?.find((t) => t.id === p.type)?.requires_api_key
                               ? 'no key'
                               : 'no key needed'}
                         </span>
@@ -705,7 +710,7 @@ export default function SettingsPage() {
                   onChange={(e) => onTypeChange(e.target.value)}
                   className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-indigo-600"
                 >
-                  {PROVIDER_TYPES.map((t) => (
+                  {(providerTypes ?? []).map((t) => (
                     <option key={t.id} value={t.id}>
                       {t.name}
                     </option>
@@ -718,7 +723,7 @@ export default function SettingsPage() {
               </label>
             </div>
 
-            {typeMeta.requires_api_key && (
+            {typeMeta?.requires_api_key && (
               <label className="block">
                 <span className="mb-1.5 block text-xs text-zinc-400">API key</span>
                 <Input
@@ -735,7 +740,7 @@ export default function SettingsPage() {
               <Input
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder={typeMeta.requires_base_url ? 'https://your-endpoint/v1' : 'https://…'}
+                placeholder={typeMeta?.requires_base_url ? 'https://your-endpoint/v1' : 'https://…'}
               />
             </label>
 

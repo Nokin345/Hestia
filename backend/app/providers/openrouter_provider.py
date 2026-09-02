@@ -14,9 +14,9 @@ from app.providers.image_resolver import resolve_image_to_base64
 from app.schemas.common import ChatMessage, ToolCall
 
 
-class OpenAIProvider(Provider):
-    id = "openai"
-    name = "OpenAI"
+class OpenRouterProvider(Provider):
+    id = "openrouter"
+    name = "OpenRouter"
 
     def requires_api_key(self) -> bool:
         return True
@@ -112,6 +112,32 @@ class OpenAIProvider(Provider):
     def _api_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return [{"type": "function", "function": tool} for tool in tools]
 
+    async def supports_reasoning(self, model: str) -> bool | None:
+        candidates = [model.lstrip("~")]
+        if candidates[0].endswith("-latest"):
+            candidates.append(candidates[0][: -len("-latest")])
+        async with httpx.AsyncClient(timeout=20) as client:
+            for cand in candidates:
+                try:
+                    resp = await client.get(
+                        f"{self.base_url}/models/{cand}/endpoints",
+                        headers=self._headers(),
+                    )
+                    if resp.status_code != 200:
+                        continue
+                    endpoints = (resp.json().get("data") or {}).get(
+                        "endpoints"
+                    ) or []
+                    if not endpoints:
+                        continue
+                    supported = [
+                        e.get("supported_parameters") or [] for e in endpoints
+                    ]
+                    return any("reasoning" in s for s in supported)
+                except Exception:
+                    continue
+        return None
+
     async def stream(
         self, params: ProviderCallParams
     ) -> AsyncIterator[ProviderStreamEvent]:
@@ -130,6 +156,8 @@ class OpenAIProvider(Provider):
         if params.tools:
             body["tools"] = self._api_tools(params.tools)
             body["tool_choice"] = "auto"
+        if params.reasoning is False:
+            body["reasoning"] = {"enabled": False}
 
         tool_calls: dict[int, dict[str, Any]] = {}
         usage: dict[str, Any] = {}

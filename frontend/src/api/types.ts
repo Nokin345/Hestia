@@ -24,13 +24,6 @@ export interface ProviderTypeMeta {
   requires_api_key: boolean
 }
 
-export const PROVIDER_TYPES: ProviderTypeMeta[] = [
-  { id: 'openrouter', name: 'OpenRouter', requires_base_url: false, default_base_url: 'https://openrouter.ai/api/v1', requires_api_key: true },
-  { id: 'ollama', name: 'Ollama', requires_base_url: false, default_base_url: 'http://localhost:11434', requires_api_key: false },
-  { id: 'llamacpp', name: 'llama.cpp', requires_base_url: false, default_base_url: 'http://localhost:8080/v1', requires_api_key: true },
-  { id: 'openai_compat', name: 'Custom (OpenAI-compatible)', requires_base_url: true, default_base_url: '', requires_api_key: true },
-]
-
 export interface Provider {
   id: string
   name: string

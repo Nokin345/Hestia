@@ -7,8 +7,10 @@ from app.models import ProviderConfig
 from app.providers.anthropic_provider import AnthropicProvider
 from app.providers.base import Provider
 from app.providers.gemini_provider import GeminiProvider
+from app.providers.llamacpp_provider import LlamaCppProvider
 from app.providers.ollama_provider import OllamaProvider
 from app.providers.openai_provider import OpenAIProvider
+from app.providers.openrouter_provider import OpenRouterProvider
 from app.schemas.provider import ProviderModel
 
 TYPE_DEFAULT_BASE_URL = {
@@ -16,6 +18,8 @@ TYPE_DEFAULT_BASE_URL = {
     "openrouter": "https://openrouter.ai/api/v1",
     "ollama": "http://localhost:11434",
     "llamacpp": "http://localhost:8080/v1",
+    "anthropic": "https://api.anthropic.com",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta",
 }
 
 
@@ -31,13 +35,26 @@ def build_provider(cfg: ProviderConfig) -> Provider:
             id=cfg.id,
             name=cfg.name,
         )
-    base_url = cfg.base_url or TYPE_DEFAULT_BASE_URL.get(cfg.type)
+    if cfg.type == "openrouter":
+        return OpenRouterProvider(
+            cfg.api_key,
+            base_url=cfg.base_url or TYPE_DEFAULT_BASE_URL.get("openrouter"),
+            id=cfg.id,
+            name=cfg.name,
+        )
+    if cfg.type == "llamacpp":
+        return LlamaCppProvider(
+            cfg.api_key,
+            base_url=cfg.base_url or TYPE_DEFAULT_BASE_URL.get("llamacpp"),
+            id=cfg.id,
+            name=cfg.name,
+        )
+    # Default: OpenAI
     return OpenAIProvider(
         cfg.api_key,
-        base_url=base_url,
+        base_url=cfg.base_url or TYPE_DEFAULT_BASE_URL.get("openai"),
         id=cfg.id,
         name=cfg.name,
-        provider_type=cfg.type,
     )
 
 
