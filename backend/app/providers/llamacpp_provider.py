@@ -30,7 +30,7 @@ class LlamaCppProvider(Provider):
     async def list_models(self) -> list[ProviderModelInfo]:
         try:
             async with httpx.AsyncClient(timeout=20) as client:
-                resp = await client.get(f"{self.base_url}/models", headers=self._headers())
+                resp = await client.get(f"{self.base_url}/models")
                 resp.raise_for_status()
                 data = resp.json()
             models = []
@@ -169,7 +169,7 @@ class LlamaCppProvider(Provider):
         async with (
             httpx.AsyncClient(timeout=None) as client,
             client.stream(
-                "POST", f"{self.base_url}/chat/completions", json=body
+                "POST", f"{self.base_url}/chat/completions", headers=self._headers(), json=body
             ) as resp,
         ):
             if resp.status_code != 200:
