@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.bm25 import bm25_score, content_words, has_content_words, keyword_boost, text_similarity, tokenize
 from app.models import Memory
 from app.models.conversation import Setting
 from app.providers.base import Provider, ProviderCallParams
@@ -76,65 +77,8 @@ async def load_memory_config(db: AsyncSession) -> dict[str, bool]:
     }
 
 
-def tokenize(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", text.lower()))
-
-
-_STOPWORDS = frozenset(
-    "a an the is am are was were be been being have has had do does did "
-    "will would shall should can could may might must need ought dare "
-    "i me my mine we us our ours you your yours he him his she her hers "
-    "it its they them their theirs this that these those "
-    "and but or nor not no so if then else than too very "
-    "in on at to for of by with from up out about into over after "
-    "what when where which who whom how why all each every some any "
-    "just really actually like well also still already even "
-    "oh ok okay yes yeah hey hi hello thanks thank please sorry "
-    "much more most own other another such only same here there "
-    "because while during before until since through between both "
-    "few many several none nothing something anything everything "
-    "get got make made go going went come came take took "
-    "know think want let say tell give see look find way thing "
-    "don doesn didn won wouldn couldn shouldn wasn weren isn aren haven hasn "
-    "don't doesn't didn't won't wouldn't couldn't shouldn't "
-    "it's i'm i've i'll i'd you're you've you'll he's she's we're we've they're they've "
-    "accordingly almost anyway certainly clearly completely "
-    "exactly finally firstly furthermore generally however "
-    "indeed instead later likewise maybe meanwhile moreover never nevertheless now "
-    "nowhere otherwise perhaps quite rather regarding secondly similarly "
-    "therefore thus wherever whichever "
-    "basically literally obviously technically essentially "
-    "that's there's here's what's who's how's let's can't".split()
-)
-
-
-def _content_words(text: str) -> list[str]:
-    """Meaningful content words: stopwords removed."""
-    return [
-        w
-        for w in re.findall(
-            r"[a-z0-9\u4e00-\u9fff]+(?:[-_][a-z0-9\u4e00-\u9fff]+)*",
-            text.lower(),
-        )
-        if w not in _STOPWORDS
-    ]
-
-
-def has_content_words(text: str) -> bool:
-    """True if the text has any meaningful words (not just greetings/filler).
-
-    Used as a trivial-query guard: "hi", "ok", "thanks" return False so we
-    skip memory recall/extraction for pointless turns.
-    """
-    return bool(_content_words(text))
-
-
 def get_text_similarity(text1: str, text2: str) -> float:
-    t1 = tokenize(text1)
-    t2 = tokenize(text2)
-    if not t1 or not t2:
-        return 0.0
-    return len(t1 & t2) / len(t1 | t2)
+    return text_similarity(text1, text2)
 
 
 async def list_memories(db: AsyncSession) -> list[Memory]:
@@ -338,20 +282,7 @@ def _is_identity_memory(mem: Memory) -> bool:
 
 
 def _bm25_score(query_tokens: set[str], mem_tokens: set[str], df: dict[str, int], n: int) -> float:
-    if not mem_tokens or not query_tokens:
-        return 0.0
-    avg_len = max(sum(len(s) for s in df) / n, 1)
-    k1, b = 1.5, 0.75
-    score = 0.0
-    for token in query_tokens:
-        if token not in mem_tokens:
-            continue
-        doc_freq = df.get(token, 0)
-        idf = math.log((n - doc_freq + 0.5) / (doc_freq + 0.5) + 1)
-        mem_len = len(mem_tokens)
-        tf_norm = (1 * (k1 + 1)) / (1 + k1 * (1 - b + b * mem_len / avg_len))
-        score += idf * tf_norm
-    return score
+    return bm25_score(query_tokens, mem_tokens, df, n)
 
 
 _PINNED_CORE_LIMIT = 10
@@ -508,7 +439,7 @@ async def _union_with_scores(
         pass
 
     # --- Keyword filter (BM25 on pool) ---
-    query_tokens = set(_content_words(query))
+    query_tokens = set(content_words(query))
     if query_tokens:
         n = len(pool)
         doc_freq: dict[str, int] = {}
