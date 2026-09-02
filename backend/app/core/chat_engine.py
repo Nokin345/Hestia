@@ -530,6 +530,8 @@ class ChatEngine:
                 "results": result.get("results") or [],
                 "fetched": result.get("fetched") or [],
             }
+            if not payload["results"] and not payload["fetched"]:
+                return False, f"web_search: no results for '{query}'"
             return True, json.dumps(payload, ensure_ascii=False)
         if name == "read_url":
             url = str(args.get("url") or "").strip()
