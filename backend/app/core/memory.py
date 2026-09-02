@@ -81,6 +81,17 @@ def get_text_similarity(text1: str, text2: str) -> float:
     return text_similarity(text1, text2)
 
 
+# Recency freshness (0..1 decay tiebreak): fresh memories score higher.
+# RECENT_DECAY=0.05/day → freshness halves every ~20 days.
+RECENT_DECAY = 0.05
+
+
+def _recency_freshness(m: Memory) -> float:
+    age = time.time() - m.updated_at
+    days = age / 86400.0
+    return max(0.0, min(1.0, 1.0 - RECENT_DECAY * days))
+
+
 async def list_memories(db: AsyncSession) -> list[Memory]:
     stmt = select(Memory).order_by(
         Memory.pinned.desc(), Memory.created_at.desc()
@@ -116,7 +127,7 @@ async def find_duplicate(db: AsyncSession, text: str) -> Memory | None:
             continue
         if other == norm:
             return existing
-        if get_text_similarity(norm, other) >= 0.7:
+        if text_similarity(norm, other) >= 0.7:
             return existing
 
     # Semantic near-duplicate via the vector store (best effort).
