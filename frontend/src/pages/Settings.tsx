@@ -723,9 +723,11 @@ export default function SettingsPage() {
               </label>
             </div>
 
-            {typeMeta?.requires_api_key && (
+            {typeMeta && (
               <label className="block">
-                <span className="mb-1.5 block text-xs text-zinc-400">API key</span>
+                <span className="mb-1.5 block text-xs text-zinc-400">
+                  API key {typeMeta.requires_api_key ? '' : '(optional)'}
+                </span>
                 <Input
                   type="password"
                   value={apiKey}
