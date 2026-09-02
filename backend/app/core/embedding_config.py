@@ -36,27 +36,3 @@ async def load_embedding_config(db: AsyncSession) -> EmbeddingConfig:
     model = (rows.get("embedding_model") or "").strip() or settings.embedding_model.strip()
     api_key = (rows.get("embedding_api_key") or "").strip() or settings.embedding_api_key.strip()
     return EmbeddingConfig(url=url, model=model, api_key=api_key)
-
-
-async def save_embedding_config(
-    db: AsyncSession,
-    *,
-    url: str | None = None,
-    model: str | None = None,
-    api_key: str | None = None,
-) -> EmbeddingConfig:
-    updates = {
-        "embedding_url": url,
-        "embedding_model": model,
-        "embedding_api_key": api_key,
-    }
-    for key, value in updates.items():
-        if value is None:
-            continue
-        setting = await db.get(Setting, key)
-        if setting is None:
-            setting = Setting(key=key, value="")
-            db.add(setting)
-        setting.value = str(value)
-    await db.commit()
-    return await load_embedding_config(db)

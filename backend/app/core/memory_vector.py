@@ -7,7 +7,6 @@ store reports not healthy and retrieval degrades gracefully.
 import asyncio
 import logging
 
-import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -194,8 +193,3 @@ async def _backfill(db: AsyncSession, store: MemoryVectorStore) -> None:
             logger.info("Backfilled %s memories into vector store", len(missing))
     except Exception as e:
         logger.warning("Memory vector backfill failed: %s", e)
-
-
-def reset_memory_store() -> None:
-    global _store
-    _store = None

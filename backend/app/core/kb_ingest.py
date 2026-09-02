@@ -178,33 +178,6 @@ def extract_pdf_page(reader, pdf_path: str | Path, page_index: int, ocr=None, oc
     return "", "none"
 
 
-def pdf_has_text_layer(path: str | Path) -> bool:
-    """True if the PDF has a usable text layer (not a scanned/image-only PDF).
-
-    A PDF counts as text-based when every page yields a reasonable amount of
-    extractable text. Mixed PDFs (some scanned pages) still return False so
-    callers can decide whether OCR is warranted.
-    """
-    try:
-        from pypdf import PdfReader
-
-        reader = PdfReader(str(path))
-        pages = list(reader.pages)
-    except Exception:
-        return False
-    if not pages:
-        return False
-    text_pages = 0
-    for page in pages:
-        try:
-            t = page.extract_text() or ""
-        except Exception:
-            t = ""
-        if _non_ws_len(t) >= _MIN_TEXT_CHARS:
-            text_pages += 1
-    return text_pages == len(pages)
-
-
 def extract_text(path: str | Path, mime: str, ocr=None, ocr_backend: str = "") -> str:
     if mime == "application/pdf":
         return extract_pdf_text(path, ocr=ocr, ocr_backend=ocr_backend)
@@ -240,46 +213,3 @@ def split_chunks(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP
             break
         i = j - overlap if j - overlap > i else j
     return chunks
-
-
-def split_chunks_with_lines(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP) -> list[tuple[str, int, int]]:
-    """Split text into overlapping chunks, returning ``(chunk, start_line, end_line)``.
-
-    Line numbers are 1-indexed.
-    """
-    if not isinstance(text, str):
-        return []
-    text = text.strip()
-    if not text:
-        return []
-
-    # Build line start positions (character index of each line's first char)
-    line_starts: list[int] = [0]
-    for pos, ch in enumerate(text):
-        if ch == "\n":
-            line_starts.append(pos + 1)
-
-    def _line_at(char_pos: int) -> int:
-        """Return 1-indexed line number for a character position."""
-        lo, hi = 0, len(line_starts) - 1
-        while lo < hi:
-            mid = (lo + hi + 1) // 2
-            if line_starts[mid] <= char_pos:
-                lo = mid
-            else:
-                hi = mid - 1
-        return lo + 1  # 1-indexed
-
-    result: list[tuple[str, int, int]] = []
-    i = 0
-    n = len(text)
-    while i < n:
-        j = min(i + size, n)
-        chunk = text[i:j]
-        start_line = _line_at(i)
-        end_line = _line_at(j - 1) if j > i else start_line
-        result.append((chunk, start_line, end_line))
-        if j >= n:
-            break
-        i = j - overlap if j - overlap > i else j
-    return result

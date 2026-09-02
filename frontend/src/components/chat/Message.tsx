@@ -183,21 +183,6 @@ export function buildTurnBubbles(rows: Array<{ role: string; parts: MessagePart[
   return bubbles
 }
 
-// During streaming the assistant's parts only carry reasoning + text so far,
-// while tool results arrive as separate rows the same way they persist. This
-// helper is what the live view uses to render the in-flight turn unit.
-export function bubbleStatus(b: AssistantBubble): string | null {
-  if (b.kind === 'toolGroup') return b.blocks[b.blocks.length - 1]?.status ?? null
-  return null
-}
-
-// If a tool-call bubble acts as a placeholder while the result streams in
-// (no content yet), it renders with an animated "calling" indicator.
-export function isPendingToolBubble(b: AssistantBubble): boolean {
-  if (b.kind === 'toolGroup') return b.blocks.some((blk) => !blk.content)
-  return false
-}
-
 // remark-math allows spaces inside `$...$` spans, so currency amounts like
 // "$5 and $10" would otherwise be swallowed as math. Before the markdown
 // parser sees the text, first mask all paired `$...$` spans that contain

@@ -408,8 +408,3 @@ async def get_kb_store(db: AsyncSession) -> KbVectorStore:
             logger.warning("KB vector store init failed: %s", e)
             _lane = None
         return KbVectorStore(_lane)
-
-
-def reset_kb_store() -> None:
-    global _lane
-    _lane = None

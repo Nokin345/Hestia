@@ -6,8 +6,6 @@ model changes, the collection is dropped and recreated from scratch.
 
 import logging
 
-import numpy as np
-
 from app.core.embeddings import EmbeddingEngine, get_embedding_engine
 
 logger = logging.getLogger(__name__)

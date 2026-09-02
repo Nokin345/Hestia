@@ -6,8 +6,6 @@ All models are local fastembed ONNX — no remote endpoints.
 import logging
 from pathlib import Path
 
-import numpy as np
-
 logger = logging.getLogger(__name__)
 
 _EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

@@ -37,10 +37,3 @@ def get_chroma_client(data_dir: str):
             logger.warning("ChromaDB heartbeat failed; collection ops will re-probe")
         logger.info("ChromaDB connected: %s", chroma_dir)
         return _client
-
-
-def reset_client() -> None:
-    """Drop the singleton (e.g. after settings change)."""
-    global _client
-    with _lock:
-        _client = None
