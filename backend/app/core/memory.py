@@ -87,7 +87,7 @@ RECENT_DECAY = 0.05
 
 
 def _recency_freshness(m: Memory) -> float:
-    age = time.time() - m.updated_at
+    age = time.time() - m.updated_at.timestamp()
     days = age / 86400.0
     return max(0.0, min(1.0, 1.0 - RECENT_DECAY * days))
 
