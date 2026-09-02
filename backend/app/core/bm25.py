@@ -32,20 +32,34 @@ STOPWORDS = frozenset(
 
 
 def tokenize(text: str) -> set[str]:
-    """Tokenize text into lowercase alphanumeric words."""
-    return set(re.findall(r"[a-z0-9]+", text.lower()))
+    """Tokenize text into lowercase alphanumeric words with simple stemming."""
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    return {stem(w) for w in words}
+
+
+def stem(word: str) -> str:
+    """Simple suffix-stripping stemmer.
+
+    Strips common English suffixes: es, s, ed, ing, ly, tion, sion, ment, ness.
+    Order matters: longer suffixes stripped first.
+    """
+    # Protect very short words
+    if len(word) <= 2:
+        return word
+    
+    # Strip suffixes in order (longest first)
+    for suffix in ["tion", "sion", "ment", "ness", "ing", "ed", "es", "s", "e", "ly"]:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 2:
+            word = word[: -len(suffix)]
+            break
+    
+    return word
 
 
 def content_words(text: str) -> list[str]:
-    """Meaningful content words with stopwords removed."""
-    return [
-        w
-        for w in re.findall(
-            r"[a-z0-9\u4e00-\u9fff]+(?:[-_][a-z0-9\u4e00-\u9fff]+)*",
-            text.lower(),
-        )
-        if w not in STOPWORDS
-    ]
+    """Meaningful content words with stopwords removed and stemmed."""
+    tokens = tokenize(text)
+    return [t for t in tokens if t not in STOPWORDS]
 
 
 def has_content_words(text: str) -> bool:
