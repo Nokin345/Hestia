@@ -92,10 +92,12 @@ body {
 }
 
 .prose-chat table {
-  @apply border-collapse my-3 text-sm;
+  @apply border-collapse my-3 text-sm w-full;
+  border: 1px solid #3f3f46;
 }
 
 .prose-chat th,
 .prose-chat td {
-  @apply border border-zinc-700 px-3 py-1.5;
+  @apply px-3 py-1.5;
+  border: 1px solid #3f3f46;
 }

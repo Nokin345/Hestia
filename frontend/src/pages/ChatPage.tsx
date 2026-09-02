@@ -1,12 +1,13 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Send, Square, Sparkles, Brain, Globe, Terminal, X, FileText, AlertTriangle, Plus } from 'lucide-react'
+import { Send, Square, Sparkles, Brain, Globe, Terminal, AlertTriangle, Plus } from 'lucide-react'
 import { apiFetch, apiPatch, apiDelete, apiPost, apiUpload } from '../api/client'
 import { streamChat } from '../api/stream'
 import { readLastModels, writeLastModels } from '../persist'
 import type { ChatEventData, KbSource, RetrievedMemory } from '../api/stream'
 import type { ChatUsage, Conversation, DefaultsConfig, McpToolDef, Message, ModelEntry, SystemPromptPreset } from '../api/types'
+import { AttachmentChip } from '../components/chat/AttachmentChip'
 import { Layout } from '../components/layout/Layout'
 import { AssistantTurn, EditBox, MessageBubble } from '../components/chat/Message'
 import { ComposerMenu } from '../components/chat/ComposerMenu'
@@ -43,6 +44,11 @@ function parseModelKey(key: string): { provider: string; model: string } {
   return { provider: key.slice(0, idx), model: key.slice(idx + MODEL_KEY_SEP.length) }
 }
 
+import { useChatSettingsStore } from '../state/chatSettings'
+import { useEditingStore } from '../state/editing'
+import { useAttachmentStore } from '../state/attachments'
+import { useStreamingStore } from '../state/streaming'
+
 export default function ChatPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
@@ -51,33 +57,105 @@ export default function ChatPage() {
 
   const [messages, setMessages] = useState<ActiveMessage[]>([])
   const [input, setInput] = useState('')
-  const [streaming, setStreaming] = useState(false)
-  const [activeTool, setActiveTool] = useState<string | null>(null)
-  const [modelKey, setModelKey] = useState('')
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [editingText, setEditingText] = useState('')
-  const [editingAttachments, setEditingAttachments] = useState<
-    { url: string; mime: string; name?: string; text?: string }[]
-  >([])
-  const [reasoning, setReasoning] = useState<boolean>(true)
-  const [searchEnabled, setSearchEnabled] = useState<boolean>(false)
-  const [codeEnabled, setCodeEnabled] = useState<boolean>(false)
-  const [mcpTools, setMcpTools] = useState<string[]>([])
-  const [kbEnabled, setKbEnabled] = useState<boolean>(false)
-  const [memoryEnabled, setMemoryEnabled] = useState<boolean>(false)
-  const [modelSwitchedFrom, setModelSwitchedFrom] = useState<string | null>(null)
-  const [systemPrompt, setSystemPrompt] = useState<string>('')
-  const [temperature, setTemperature] = useState<number>(0.7)
-  const [attachments, setAttachments] = useState<
-    { url: string; mime: string; name?: string; text?: string }[]
-  >([])
-  const [attaching, setAttaching] = useState(false)
-  const [dragging, setDragging] = useState(false)
+
+  const streaming = useStreamingStore((s) => s.streaming)
+  const setStreaming = (v: boolean | ((prev: boolean) => boolean)) => {
+    const value = typeof v === 'function' ? v(useStreamingStore.getState().streaming) : v
+    useStreamingStore.setState({ streaming: value })
+  }
+  const activeTool = useStreamingStore((s) => s.activeTool)
+  const setActiveTool = (v: string | null | ((prev: string | null) => string | null)) => {
+    const value = typeof v === 'function' ? v(useStreamingStore.getState().activeTool) : v
+    useStreamingStore.setState({ activeTool: value })
+  }
+
+  const modelKey = useChatSettingsStore((s) => s.modelKey)
+  const setModelKey = (v: string | ((prev: string) => string)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().modelKey) : v
+    useChatSettingsStore.setState({ modelKey: value })
+  }
+  const reasoning = useChatSettingsStore((s) => s.reasoning)
+  const setReasoning = (v: boolean | ((prev: boolean) => boolean)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().reasoning) : v
+    useChatSettingsStore.setState({ reasoning: value })
+  }
+  const searchEnabled = useChatSettingsStore((s) => s.searchEnabled)
+  const setSearchEnabled = (v: boolean | ((prev: boolean) => boolean)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().searchEnabled) : v
+    useChatSettingsStore.setState({ searchEnabled: value })
+  }
+  const codeEnabled = useChatSettingsStore((s) => s.codeEnabled)
+  const setCodeEnabled = (v: boolean | ((prev: boolean) => boolean)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().codeEnabled) : v
+    useChatSettingsStore.setState({ codeEnabled: value })
+  }
+  const mcpTools = useChatSettingsStore((s) => s.mcpTools)
+  const setMcpTools = (v: string[] | ((prev: string[]) => string[])) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().mcpTools) : v
+    useChatSettingsStore.setState({ mcpTools: value })
+  }
+  const kbEnabled = useChatSettingsStore((s) => s.kbEnabled)
+  const setKbEnabled = (v: boolean | ((prev: boolean) => boolean)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().kbEnabled) : v
+    useChatSettingsStore.setState({ kbEnabled: value })
+  }
+  const memoryEnabled = useChatSettingsStore((s) => s.memoryEnabled)
+  const setMemoryEnabled = (v: boolean | ((prev: boolean) => boolean)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().memoryEnabled) : v
+    useChatSettingsStore.setState({ memoryEnabled: value })
+  }
+  const modelSwitchedFrom = useChatSettingsStore((s) => s.modelSwitchedFrom)
+  const setModelSwitchedFrom = (v: string | null | ((prev: string | null) => string | null)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().modelSwitchedFrom) : v
+    useChatSettingsStore.setState({ modelSwitchedFrom: value })
+  }
+  const systemPrompt = useChatSettingsStore((s) => s.systemPrompt)
+  const setSystemPrompt = (v: string | ((prev: string) => string)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().systemPrompt) : v
+    useChatSettingsStore.setState({ systemPrompt: value })
+  }
+  const temperature = useChatSettingsStore((s) => s.temperature)
+  const setTemperature = (v: number | ((prev: number) => number)) => {
+    const value = typeof v === 'function' ? v(useChatSettingsStore.getState().temperature) : v
+    useChatSettingsStore.setState({ temperature: value })
+  }
+
+  const editingId = useEditingStore((s) => s.editingId)
+  const setEditingId = (v: string | null | ((prev: string | null) => string | null)) => {
+    const value = typeof v === 'function' ? v(useEditingStore.getState().editingId) : v
+    useEditingStore.setState({ editingId: value })
+  }
+  const editingText = useEditingStore((s) => s.editingText)
+  const setEditingText = (v: string | ((prev: string) => string)) => {
+    const value = typeof v === 'function' ? v(useEditingStore.getState().editingText) : v
+    useEditingStore.setState({ editingText: value })
+  }
+  const editingAttachments = useEditingStore((s) => s.editingAttachments)
+  const setEditingAttachments = (v: { url: string; mime: string; name?: string; text?: string }[] | ((prev: { url: string; mime: string; name?: string; text?: string }[]) => { url: string; mime: string; name?: string; text?: string }[])) => {
+    const value = typeof v === 'function' ? v(useEditingStore.getState().editingAttachments) : v
+    useEditingStore.setState({ editingAttachments: value })
+  }
+
+  const attachments = useAttachmentStore((s) => s.attachments)
+  const setAttachments = (v: { url: string; mime: string; name?: string; text?: string }[] | ((prev: { url: string; mime: string; name?: string; text?: string }[]) => { url: string; mime: string; name?: string; text?: string }[])) => {
+    const value = typeof v === 'function' ? v(useAttachmentStore.getState().attachments) : v
+    useAttachmentStore.setState({ attachments: value })
+  }
+  const attaching = useAttachmentStore((s) => s.attaching)
+  const setAttaching = (v: boolean | ((prev: boolean) => boolean)) => {
+    const value = typeof v === 'function' ? v(useAttachmentStore.getState().attaching) : v
+    useAttachmentStore.setState({ attaching: value })
+  }
+  const dragging = useAttachmentStore((s) => s.dragging)
+  const setDragging = (v: boolean | ((prev: boolean) => boolean)) => {
+    const value = typeof v === 'function' ? v(useAttachmentStore.getState().dragging) : v
+    useAttachmentStore.setState({ dragging: value })
+  }
   const attachInputRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const wakeLockRef = useRef<WakeLockSentinel | null>(null)
 
-  const acquireWakeLock = useCallback(async () => {
+  const acquireWakeLock = async () => {
     try {
       const lock = await navigator.wakeLock.request('screen')
       wakeLockRef.current = lock
@@ -87,12 +165,12 @@ export default function ChatPage() {
     } catch {
       // Wake lock not supported or denied
     }
-  }, [])
+  }
 
-  const releaseWakeLock = useCallback(() => {
+  const releaseWakeLock = () => {
     wakeLockRef.current?.release().catch(() => {})
     wakeLockRef.current = null
-  }, [])
+  }
   useEffect(() => {
     const el = inputRef.current
     if (!el) return
@@ -112,65 +190,51 @@ export default function ChatPage() {
       const store = retrievedStoreRef.current
       const kbs = kbStoreRef.current
       const lineRanges = kbLineRangesRef.current
+
+      function attachField(
+        msg: ActiveMessage,
+        field: 'retrievedMemories' | 'retrievedKb' | 'kbLineRanges',
+        persisted: any,
+        localStore: Record<string, any>,
+      ) {
+        if (persisted && persisted.length > 0) {
+          msg[field] = persisted
+        } else if (msg.role === 'assistant' && localStore[msg.id]) {
+          msg[field] = localStore[msg.id]
+        }
+      }
+
       const merged = list.map((m) => {
         const active = { ...m, temp: false } as ActiveMessage
-        // Prefer the persisted server snapshot (survives reload).
-        if (m.memories_used && m.memories_used.length) {
-          active.retrievedMemories = m.memories_used
-        } else if (m.role === 'assistant' && store[m.id]) {
-          active.retrievedMemories = store[m.id]
-        }
-        if (m.kb_sources && m.kb_sources.length) {
-          active.retrievedKb = m.kb_sources as KbSource[]
-        } else if (m.role === 'assistant' && kbs[m.id]) {
-          active.retrievedKb = kbs[m.id]
-        }
-        if (m.kb_line_ranges) {
-          active.kbLineRanges = m.kb_line_ranges as Record<string, [number, number][]>
-        } else if (m.role === 'assistant' && lineRanges[m.id]) {
-          active.kbLineRanges = lineRanges[m.id]
-        }
+        attachField(active, 'retrievedMemories', m.memories_used, store)
+        attachField(active, 'retrievedKb', m.kb_sources, kbs)
+        attachField(active, 'kbLineRanges', m.kb_line_ranges, lineRanges)
         return active
       })
-      if (Object.keys(store).length > 0) {
-        const entries = Object.entries(store)
+
+      // Fallback: if no message has retrieved data, attach to the last assistant message
+      function attachLatest(
+        field: 'retrievedMemories' | 'retrievedKb' | 'kbLineRanges',
+        localStore: Record<string, any>,
+      ) {
+        if (Object.keys(localStore).length === 0) return
+        const entries = Object.entries(localStore)
         const [, latest] = entries[entries.length - 1]
-        const hasAny = merged.some((m) => m.retrievedMemories?.length)
+        const hasAny = merged.some((m) => (m as any)[field]?.length)
         if (!hasAny) {
           for (let i = merged.length - 1; i >= 0; i--) {
             if (merged[i].role === 'assistant') {
-              merged[i].retrievedMemories = latest as RetrievedMemory[]
+              (merged[i] as any)[field] = latest
               break
             }
           }
         }
       }
-      if (Object.keys(kbs).length > 0) {
-        const entries = Object.entries(kbs)
-        const [, latest] = entries[entries.length - 1]
-        const hasAny = merged.some((m) => m.retrievedKb?.length)
-        if (!hasAny) {
-          for (let i = merged.length - 1; i >= 0; i--) {
-            if (merged[i].role === 'assistant') {
-              merged[i].retrievedKb = latest as KbSource[]
-              break
-            }
-          }
-        }
-      }
-      if (Object.keys(lineRanges).length > 0) {
-        const entries = Object.entries(lineRanges)
-        const [, latest] = entries[entries.length - 1]
-        const hasAny = merged.some((m) => m.kbLineRanges)
-        if (!hasAny) {
-          for (let i = merged.length - 1; i >= 0; i--) {
-            if (merged[i].role === 'assistant') {
-              merged[i].kbLineRanges = latest
-              break
-            }
-          }
-        }
-      }
+
+      attachLatest('retrievedMemories', store)
+      attachLatest('retrievedKb', kbs)
+      attachLatest('kbLineRanges', lineRanges)
+
       return merged
     },
     [],
@@ -302,45 +366,37 @@ export default function ChatPage() {
     }
   }, [conversationId, knownModels, defaults, presets, allMcpTools])
 
-  const toggleKb = useCallback(() => {
+const toggleKb = () => {
     const next = !kbEnabled
     setKbEnabled(next)
     if (!conversationId) return
     apiPatch(`/conversations/${conversationId}`, { kb_enabled: next }).catch(() => {})
-  }, [kbEnabled, conversationId])
+  }
 
-  const toggleMemory = useCallback(() => {
+  const toggleMemory = () => {
     const next = !memoryEnabled
     setMemoryEnabled(next)
     if (!conversationId) return
     apiPatch(`/conversations/${conversationId}`, { memory_enabled: next }).catch(() => {})
-  }, [memoryEnabled, conversationId])
+  }
 
-  const toggleMcpTool = useCallback(
-    (toolName: string) => {
-      const next = mcpTools.includes(toolName)
-        ? mcpTools.filter((n) => n !== toolName)
-        : [...mcpTools, toolName]
-      setMcpTools(next)
-      if (!conversationId) return
-      apiPatch(`/conversations/${conversationId}`, { mcp_tools: next }).catch(() => {})
-    },
-    [mcpTools, conversationId],
-  )
+  const toggleMcpTool = (toolName: string) => {
+    const next = mcpTools.includes(toolName)
+      ? mcpTools.filter((n) => n !== toolName)
+      : [...mcpTools, toolName]
+    setMcpTools(next)
+  }
 
-  const handleModelChange = useCallback(
-    (key: string) => {
-      setModelKey(key)
-      setModelSwitchedFrom(null)
-      if (!conversationId) return
-      const parsed = parseModelKey(key)
-      apiPatch(`/conversations/${conversationId}`, {
-        provider: parsed.provider,
-        model: parsed.model,
-      }).catch(() => {})
-    },
-    [conversationId],
-  )
+  const handleModelChange = (key: string) => {
+    setModelKey(key)
+    setModelSwitchedFrom(null)
+    if (!conversationId) return
+    const parsed = parseModelKey(key)
+    apiPatch(`/conversations/${conversationId}`, {
+      provider: parsed.provider,
+      model: parsed.model,
+    }).catch(() => {})
+  }
 
   // Persist the prompt and temperature to the current conversation as they
   // change, like the toggles, so reopening the chat restores them.
@@ -393,7 +449,7 @@ export default function ChatPage() {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const stop = useCallback(() => {
+  const stop = () => {
     const convId = searchParams.get('c') || realConvIdRef.current
     const aiId = aiIdRef.current
     if (aiId && convId) {
@@ -424,7 +480,7 @@ export default function ChatPage() {
         })
         .catch(() => {})
     }, 500)
-  }, [searchParams, setSearchParams, reattachRetrieved])
+  }
 
   const aiIdRef = useRef<string | null>(null)
   // The backend assigns the real conversation id up front (SSE `conversation`
@@ -440,8 +496,7 @@ export default function ChatPage() {
   // is still the last row, patch it in place; otherwise (e.g. it sits before
   // a tool row from the previous round) spawn a fresh assistant row after the
   // tools — this is what keeps each tool round a contiguous run of tool rows.
-  const upsertAssistant = useCallback(
-    (apply: (m: ActiveMessage) => ActiveMessage) => {
+  const upsertAssistant = (apply: (m: ActiveMessage) => ActiveMessage) => {
       setMessages((prev) => {
         const id = aiIdRef.current
         const idx = id ? prev.findIndex((m) => m.id === id) : -1
@@ -461,12 +516,9 @@ export default function ChatPage() {
         }
         return [...prev, apply(base)]
       })
-    },
-    [model],
-  )
+    }
 
-  const handleStreamEvent = useCallback(
-    () => (e: ChatEventData) => {
+  const handleStreamEvent = () => (e: ChatEventData) => {
       const target = () => aiIdRef.current
       if (e.event === 'conversation') {
         const cid = e.data.conversation_id
@@ -585,12 +637,9 @@ export default function ChatPage() {
             .catch(() => {})
         }
       }
-    },
-    [conversationId, model, setSearchParams, reattachRetrieved, upsertAssistant],
-  )
+    }
 
-  const send = useCallback(
-    async (text: string) => {
+  const send = async (text: string) => {
       if ((!text.trim() && attachments.length === 0) || streaming) return
       const content = text.trim()
       const convProvider = provider || ''
@@ -661,12 +710,9 @@ export default function ChatPage() {
         abortRef.current = null
         queryClient.invalidateQueries({ queryKey: ['conversations'] })
       }
-    },
-    [conversationId, model, provider, streaming, reasoning, searchEnabled, codeEnabled, mcpTools, kbEnabled, memoryEnabled, systemPrompt, temperature, attachments, queryClient, handleStreamEvent, acquireWakeLock, releaseWakeLock],
-  )
+    }
 
-  const sendEdit = useCallback(
-    async (messageId: string, newText: string) => {
+  const sendEdit = async (messageId: string, newText: string) => {
       if (!conversationId || streaming) return
       const content = newText.trim()
       if (!content) return
@@ -732,12 +778,9 @@ export default function ChatPage() {
         abortRef.current = null
         queryClient.invalidateQueries({ queryKey: ['conversations'] })
       }
-    },
-    [conversationId, model, streaming, reasoning, searchEnabled, codeEnabled, mcpTools, kbEnabled, systemPrompt, temperature, queryClient, handleStreamEvent, editingAttachments, acquireWakeLock, releaseWakeLock],
-  )
+    }
 
-  const startEditMessage = useCallback(
-    (messageId: string) => {
+  const startEditMessage = (messageId: string) => {
       const m = messages.find((x) => x.id === messageId)
       if (!m) return
       const text = m.parts
@@ -756,12 +799,9 @@ export default function ChatPage() {
       setEditingId(messageId)
       setEditingText(text)
       setEditingAttachments(attach)
-    },
-    [messages],
-  )
+    }
 
-  const saveEdit = useCallback(
-    async (messageId: string, newText: string) => {
+  const saveEdit = async (messageId: string, newText: string) => {
       if (!conversationId || streaming) return
       const content = newText.trim()
       if (!content) return
@@ -773,12 +813,9 @@ export default function ChatPage() {
       } catch (err) {
         alert((err as Error).message)
       }
-    },
-    [conversationId, streaming],
-  )
+    }
 
-  const deleteMessage = useCallback(
-    async (messageIds: string[]) => {
+  const deleteMessage = async (messageIds: string[]) => {
       if (!conversationId || streaming) return
       try {
         for (const mid of messageIds) {
@@ -790,11 +827,9 @@ export default function ChatPage() {
       } catch (err) {
         alert((err as Error).message)
       }
-    },
-    [conversationId, streaming, editingId],
-  )
+    }
 
-  const startNewChat = useCallback(() => {
+  const startNewChat = () => {
     if (abortRef.current) abortRef.current.abort()
     setSearchParams({}, { replace: true })
     setMessages([])
@@ -802,14 +837,13 @@ export default function ChatPage() {
     setEditingId(null)
     setModelSwitchedFrom(null)
     retrievedStoreRef.current = {}
-  }, [setSearchParams])
+  }
 
-  const handleAttachFiles = useCallback(() => {
+  const handleAttachFiles = () => {
     attachInputRef.current?.click()
-  }, [])
+  }
 
-  const uploadFiles = useCallback(
-    async (files: File[]) => {
+  const uploadFiles = async (files: File[]) => {
       if (!files.length) return
       let convoId = conversationId
       try {
@@ -843,52 +877,41 @@ export default function ChatPage() {
       } finally {
         setAttaching(false)
       }
-    },
-    [conversationId, setSearchParams, queryClient, editingId],
-  )
+    }
 
-  const handleAttachChange = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleAttachChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
       const files = Array.from(e.target.files ?? [])
       e.target.value = ''
       await uploadFiles(files)
-    },
-    [uploadFiles],
-  )
+    }
 
-  const handleDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
       e.preventDefault()
       setDragging(false)
       const files = Array.from(e.dataTransfer.files ?? [])
       void uploadFiles(files)
-    },
-    [uploadFiles],
-  )
+    }
 
-  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     setDragging(true)
-  }, [])
+  }
 
-  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
     if (e.currentTarget.contains(e.relatedTarget as Node)) return
     setDragging(false)
-  }, [])
+  }
 
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       const files = Array.from(e.clipboardData?.files ?? [])
       if (!files.length) return
       e.preventDefault()
       void uploadFiles(files)
-    },
-    [uploadFiles],
-  )
+    }
 
-  const removeAttachment = useCallback((url: string) => {
+  const removeAttachment = (url: string) => {
     setAttachments((prev) => prev.filter((a) => a.url !== url))
-  }, [])
+  }
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -929,36 +952,13 @@ export default function ChatPage() {
           {editingAttachments.length > 0 && (
             <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
               {editingAttachments.map((a) => (
-                a.mime.startsWith('image/') ? (
-                  <div key={a.url} className="group relative">
-                    <img
-                      src={a.url}
-                      alt="attachment"
-                      className="size-20 rounded-lg border border-zinc-700 object-cover"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setEditingAttachments((prev) => prev.filter((x) => x.url !== a.url))}
-                      className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-red-600 text-white opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover:opacity-100"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <div key={a.url} className="group relative">
-                    <div className="flex h-20 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-xs text-zinc-300">
-                      <FileText className="size-4 shrink-0 text-indigo-400" />
-                      <span className="max-w-24 truncate">{a.name}</span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setEditingAttachments((prev) => prev.filter((x) => x.url !== a.url))}
-                      className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-red-600 text-white opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover:opacity-100"
-                    >
-                      <X className="size-3" />
-                    </button>
-                  </div>
-                )
+                <AttachmentChip
+                  key={a.url}
+                  attachment={a}
+                  onRemove={() => setEditingAttachments((prev) => prev.filter((x) => x.url !== a.url))}
+                  imageClassName="size-20 rounded-lg border border-zinc-700 object-cover"
+                  containerClassName="flex h-20 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-xs text-zinc-300"
+                />
               ))}
               <button
                 type="button"
@@ -1078,38 +1078,13 @@ export default function ChatPage() {
             <div className="relative mx-auto max-w-3xl px-4 py-3">
               {attachments.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-2">
-                  {attachments.map((a) =>
-                    a.mime.startsWith('image/') ? (
-                      <div key={a.url} className="group relative">
-                        <img
-                          src={a.url}
-                          alt="attachment"
-                          className="size-16 rounded-lg border border-zinc-700 object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeAttachment(a.url)}
-                          className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-red-600 text-white opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover:opacity-100"
-                        >
-                          <X className="size-3" />
-                        </button>
-                      </div>
-                    ) : (
-                      <div key={a.url} className="group relative">
-                        <div className="flex h-16 items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 text-xs text-zinc-300">
-                          <FileText className="size-4 shrink-0 text-indigo-400" />
-                          <span className="max-w-32 truncate">{a.name}</span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeAttachment(a.url)}
-                          className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-red-600 text-white opacity-0 transition-opacity pointer-coarse:opacity-100 group-hover:opacity-100"
-                        >
-                          <X className="size-3" />
-                        </button>
-                      </div>
-                    ),
-                  )}
+                  {attachments.map((a) => (
+                    <AttachmentChip
+                      key={a.url}
+                      attachment={a}
+                      onRemove={() => removeAttachment(a.url)}
+                    />
+                  ))}
                 </div>
               )}
             <div className="mb-2 flex items-center gap-2">

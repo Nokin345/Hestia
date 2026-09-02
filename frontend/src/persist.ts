@@ -1,14 +1,11 @@
 import { QueryClient } from '@tanstack/react-query'
-import { experimental_createQueryPersister } from '@tanstack/query-persist-client-core'
+import { persistQueryClient } from '@tanstack/react-query-persist-client'
+import type { Persister, PersistedClient } from '@tanstack/query-persist-client-core'
 
 const PERSIST_PREFIX = 'hestia:query'
 const PERSIST_BUSTER = 'hestia-v1'
 const MODELS_SNAPSHOT_KEY = 'hestia:lastModels'
 
-// Persist only cheap GET queries that are safe to hydrate from cache: provider
-// lists, conversations, memory stats and search config. Model lists
-// are intentionally excluded — they mirror live provider state, so restoring a
-// stale snapshot would keep removed models visible across reloads.
 function shouldPersist(key: unknown): boolean {
   if (!Array.isArray(key) || typeof key[0] !== 'string') return false
   const first = key[0]
@@ -22,52 +19,67 @@ function shouldPersist(key: unknown): boolean {
   )
 }
 
-const persister = experimental_createQueryPersister({
-  storage: {
-    getItem(key: string) {
-      try {
-        return window.localStorage.getItem(key)
-      } catch {
-        return null
-      }
-    },
-    setItem(key: string, value: string) {
-      try {
-        window.localStorage.setItem(key, value)
-      } catch {
-        // Quota exceeded or private mode - ignore.
-      }
-    },
-    removeItem(key: string) {
-      try {
-        window.localStorage.removeItem(key)
-      } catch {
-        // ignore
-      }
-    },
+const persister: Persister = {
+  persistClient: async (client: PersistedClient) => {
+    try {
+      window.localStorage.setItem(
+        PERSIST_PREFIX,
+        JSON.stringify({
+          timestamp: client.timestamp,
+          buster: client.buster,
+          clientState: client.clientState,
+        }),
+      )
+    } catch {
+      // ignore storage failures
+    }
   },
-  prefix: PERSIST_PREFIX,
-  buster: PERSIST_BUSTER,
-  filters: { predicate: (query) => shouldPersist(query.queryKey) },
-})
+  restoreClient: async () => {
+    try {
+      const raw = window.localStorage.getItem(PERSIST_PREFIX)
+      if (!raw) return undefined
+      const data = JSON.parse(raw)
+      return {
+        timestamp: data.timestamp,
+        buster: data.buster,
+        clientState: data.clientState,
+      }
+    } catch {
+      return undefined
+    }
+  },
+  removeClient: async () => {
+    try {
+      window.localStorage.removeItem(PERSIST_PREFIX)
+    } catch {
+      // ignore
+    }
+  },
+}
 
 export function createAppQueryClient(): QueryClient {
-  return new QueryClient({
+  const client = new QueryClient({
     defaultOptions: {
       queries: {
         retry: 1,
         refetchOnWindowFocus: false,
-        // How long restored cache stays "fresh" before background revalidation.
         staleTime: 60_000,
-        persister: persister.persisterFn,
       },
     },
   })
+
+  persistQueryClient({
+    queryClient: client,
+    persister,
+    buster: PERSIST_BUSTER,
+    dehydrateOptions: {
+      shouldDehydrateQuery: (query) => shouldPersist(query.queryKey),
+    },
+  })
+
+  return client
 }
 
-// Synchronous last-known models snapshot for instant dropdown population on
-// load, independent of React Query's async cache restore/refetch. The exact
-// signatures are deliberately loose to avoid a hard import edge on ModelEntry.
 export function readLastModels<T = Record<string, unknown>>(): T[] {
   try {
     const raw = window.localStorage.getItem(MODELS_SNAPSHOT_KEY)

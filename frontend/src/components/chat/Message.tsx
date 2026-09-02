@@ -1,10 +1,6 @@
 import { memo, useLayoutEffect, useEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
-import rehypeHighlight from 'rehype-highlight'
-import rehypeKatex from 'rehype-katex'
-import { Check, ChevronRight, Copy, Pencil, Send, Trash2, Wrench, X, FileText, ExternalLink } from 'lucide-react'
+import { MarkdownRenderer } from '@affanhamid/markdown-renderer'
+import { ChevronRight, Pencil, Send, Trash2, Wrench, X, FileText, ExternalLink } from 'lucide-react'
 import type { ReactNode } from 'react'
 import type { ChatUsage, Message, MessagePart } from '../../api/types'
 import type { RetrievedMemory, KbSource } from '../../api/stream'
@@ -183,73 +179,6 @@ export function buildTurnBubbles(rows: Array<{ role: string; parts: MessagePart[
   return bubbles
 }
 
-// remark-math allows spaces inside `$...$` spans, so currency amounts like
-// "$5 and $10" would otherwise be swallowed as math. Before the markdown
-// parser sees the text, first mask all paired `$...$` spans that contain
-// math-like content (LaTeX commands, operators, or multiple word chars).
-// Then escape every remaining `$` — these are guaranteed to be currency.
-// Genuine formulas such as `$C_5–C_{12}$`, `$0^3$`, `$5.50$`, `$2025 =$`,
-// or `$\frac{1}{2}$` are left untouched.
-function protectCurrency(raw: string): string {
-  const protectedBlocks: string[] = []
-  const mask = (m: string) => {
-    protectedBlocks.push(m)
-    return `\u0000${protectedBlocks.length - 1}\u0000`
-  }
-  let out = raw.replace(/```[\s\S]*?```/g, mask)
-  out = out.replace(/`[^`]*`/g, mask)
-  out = out.replace(/\$\$[\s\S]*?\$\$/g, mask)
-  // Mask paired $...$ spans whose content looks like math
-  out = out.replace(/\$[^$]*?\$/g, (m) => {
-    const inner = m.slice(1, -1)
-    // LaTeX commands, operators, or grouping → math
-    if (/[\\^_{}=+*\/()\[\],|:;!?<>]/.test(inner)) {
-      // Replace bare | with \vert so remark-gfm won't see it as a table separator
-      const patched = m.replace(/\|/g, '\\vert ')
-      return mask(patched)
-    }
-    // Single letter variable (e.g. $E$, $x$) → math
-    if (/^[A-Za-z]+$/.test(inner)) return mask(m)
-    // Long content → likely math
-    if (inner.length > 20) return mask(m)
-    return m
-  })
-  // Every remaining $ is now currency — escape it
-  out = out.replace(/\$/g, '\\$')
-  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => protectedBlocks[Number(i)])
-}
-
-// remark-math parses single-line `$$...$$` as inline math, so it never gets
-// the `katex-display` wrapper (and no display styling applies). This promotes
-// a paragraph that is entirely math to the exact `math` (display) node shape
-// remark-math produces for `\n$$\n...\n$$\n` blocks.
-function remarkPromoteDisplayMath() {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return (tree: any) => {
-    const visit = (node: any, cb: (n: any) => void) => {
-      cb(node)
-      for (const c of node.children ?? []) visit(c, cb)
-    }
-    visit(tree, (node) => {
-      if (node.type !== 'paragraph') return
-      const [only] = node.children
-      if (node.children.length !== 1 || only.type !== 'inlineMath') return
-      only.type = 'math'
-      only.data = {
-        hName: 'pre',
-        hChildren: [
-          {
-            type: 'element',
-            tagName: 'code',
-            properties: { className: ['language-math', 'math-display'] },
-            children: [{ type: 'text', value: only.value }],
-          },
-        ],
-      }
-    })
-  }
-}
-
 function UsageFooter({ usage }: { usage: ChatUsage }) {
   const parts: string[] = []
   if (usage.input_tokens != null) parts.push(`↑ ${usage.input_tokens}`)
@@ -273,59 +202,6 @@ function UsageFooter({ usage }: { usage: ChatUsage }) {
   )
 }
 
-function nodeText(node: React.ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node)
-  if (Array.isArray(node)) return node.map(nodeText).join('')
-  if (node && typeof node === 'object' && 'props' in node) {
-    return nodeText((node as { props: { children?: React.ReactNode } }).props.children)
-  }
-  return ''
-}
-
-function CodeBlock({ children }: { children: React.ReactNode }) {
-  const text = nodeText(children)
-  const lang = codeLanguage(children)
-  const [copied, setCopied] = useState(false)
-  const onCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      setCopied(false)
-    }
-  }
-  return (
-    <div className="group/code my-3 overflow-hidden rounded-lg border border-zinc-800 bg-zinc-900">
-      <div className="flex items-center justify-between border-b border-zinc-800/80 px-3 py-1.5">
-        <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-500">
-          {lang || 'text'}
-        </span>
-        <button
-          onClick={onCopy}
-          title="Copy code"
-          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-white"
-        >
-          {copied ? <Check className="size-3 text-indigo-400" /> : <Copy className="size-3" />}
-          {copied ? 'Copied' : 'Copy'}
-        </button>
-      </div>
-      <pre className="my-0! overflow-x-auto p-3 text-sm">{children}</pre>
-    </div>
-  )
-}
-
-// rehype-highlight stamps the fence's language onto the <code> element as a
-// `language-<lang>` class — surface it as a small label above the code.
-function codeLanguage(children: React.ReactNode): string | null {
-  if (!children || typeof children !== 'object' || !('props' in children)) return null
-  const props = (children as { props?: { className?: unknown } }).props
-  const cls = props?.className
-  if (typeof cls !== 'string') return null
-  const m = cls.match(/language-([\w-]+)/)
-  return m ? m[1] : null
-}
-
 export const Markdown = memo(function Markdown({
   content,
   className = 'prose-chat',
@@ -335,13 +211,7 @@ export const Markdown = memo(function Markdown({
 }) {
   return (
     <div className={className}>
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath, remarkPromoteDisplayMath]}
-        rehypePlugins={[[rehypeHighlight, { detect: false }], rehypeKatex]}
-        components={{ pre: ({ children }) => <CodeBlock>{children}</CodeBlock> }}
-      >
-        {protectCurrency(content)}
-      </ReactMarkdown>
+      <MarkdownRenderer markdown={content} className="prose-chat" />
     </div>
   )
 })
