@@ -21,10 +21,33 @@ class LlamaCppProvider(Provider):
     def requires_api_key(self) -> bool:
         return False
 
+    def _headers(self) -> dict[str, str]:
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
+
     async def list_models(self) -> list[ProviderModelInfo]:
-        # llama.cpp doesn't have a standard models endpoint
-        # Return an empty list (user configures model directly)
-        return []
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.get(f"{self.base_url}/models", headers=self._headers())
+                resp.raise_for_status()
+                data = resp.json()
+            models = []
+            for item in data.get("data", []):
+                mid = item.get("id", "")
+                if not mid:
+                    continue
+                models.append(
+                    ProviderModelInfo(
+                        id=mid,
+                        name=mid,
+                    )
+                )
+            return models
+        except Exception:
+            # Fall back to empty list if endpoint not available
+            return []
 
     @staticmethod
     def _to_api_content(messages: list[ChatMessage]) -> list[dict[str, Any]]:

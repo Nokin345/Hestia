@@ -21,6 +21,9 @@ class OpenRouterProvider(Provider):
     def requires_api_key(self) -> bool:
         return True
 
+    def _headers(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.api_key}"}
+
     async def list_models(self) -> list[ProviderModelInfo]:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.get(f"{self.base_url}/models", headers=self._headers())
