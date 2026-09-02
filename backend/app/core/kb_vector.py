@@ -8,12 +8,12 @@ to a no-op (empty results).
 
 import asyncio
 import logging
-import math
 import re
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.core.bm25 import bm25_score, content_words, keyword_boost, tokenize
 from app.core.embedding_lanes import build_embedding_lane
 
 logger = logging.getLogger(__name__)
@@ -22,71 +22,6 @@ COLLECTION_NAME = "hestia_kb"
 RAG_SIMILARITY_THRESHOLD = 0.2
 FUSION_VS_WEIGHT = 0.7
 FUSION_KW_WEIGHT = 0.3
-
-_STOPWORDS = frozenset(
-    "a an the is am are was were be been being have has had do does did "
-    "will would shall should can could may might must need ought dare "
-    "i me my mine we us our ours you your yours he him his she her hers "
-    "it its they them their theirs this that these those "
-    "and but or nor not no so if then else than too very "
-    "in on at to for of by with from up out about into over after "
-    "what when where which who whom how why all each every some any "
-    "just really actually like well also still already even "
-    "oh ok okay yes yeah hey hi hello thanks thank please sorry "
-    "much more most own other another such only same here there "
-    "because while during before until since through between both "
-    "few many several none nothing something anything everything "
-    "get got make made go going went come came take took "
-    "know think want let say tell give see look find way thing "
-    "don doesn didn won wouldn couldn shouldn wasn weren isn aren haven hasn "
-    "don't doesn't didn't won't wouldn't couldn't shouldn't "
-    "it's i'm i've i'll i'd you're you've you'll he's she's we're we've they're they've "
-    "accordingly anyway almost certainly clearly completely "
-    "exactly finally firstly furthermore generally however "
-    "indeed instead later likewise maybe meanwhile moreover never nevertheless now "
-    "nowhere otherwise perhaps quite rather regarding secondly similarly "
-    "therefore thus wherever whichever "
-    "basically literally obviously technically essentially "
-    "that's there's here's what's who's how's let's can't".split()
-)
-
-
-def _content_words(text: str) -> list[str]:
-    return [
-        w
-        for w in re.findall(
-            r"[a-z0-9\u4e00-\u9fff]+(?:[-_][a-z0-9\u4e00-\u9fff]+)*",
-            text.lower(),
-        )
-        if w not in _STOPWORDS
-    ]
-
-
-def _tokenize(text: str) -> set[str]:
-    return set(re.findall(r"[a-z0-9]+", text.lower()))
-
-
-def _bm25_score(query_tokens: set[str], chunk_tokens: set[str], df: dict[str, int], n: int) -> float:
-    if not chunk_tokens or not query_tokens:
-        return 0.0
-    avg_len = max(sum(len(s) for s in df) / n, 1)
-    k1, b = 1.5, 0.75
-    score = 0.0
-    for token in query_tokens:
-        if token not in chunk_tokens:
-            continue
-        doc_freq = df.get(token, 0)
-        idf = math.log((n - doc_freq + 0.5) / (doc_freq + 0.5) + 1)
-        chunk_len = len(chunk_tokens)
-        tf_norm = (1 * (k1 + 1)) / (1 + k1 * (1 - b + b * chunk_len / avg_len))
-        score += idf * tf_norm
-    return score
-
-
-def _keyword_boost(query: str, chunk_text: str, kw_norm: float) -> float:
-    if query.lower() in chunk_text.lower():
-        kw_norm = max(kw_norm, 0.8)
-    return kw_norm
 
 
 def _fused_score(vs: float, kw_norm: float) -> float:
@@ -261,8 +196,8 @@ class KbVectorStore:
             return []
 
         # --- BM25 keyword scores ---
-        query_tokens = set(_content_words(query))
-        dt = {doc or "": _tokenize(doc or "") for doc in all_docs}
+        query_tokens = set(content_words(query))
+        dt = {doc or "": tokenize(doc or "") for doc in all_docs}
         df: dict[str, int] = {}
         for toks in dt.values():
             for t in toks:
@@ -270,9 +205,9 @@ class KbVectorStore:
 
         kw_scores: dict[str, float] = {}
         for cid, doc in zip(all_ids, all_docs):
-            raw = _bm25_score(query_tokens, dt.get(doc or "", set()), df, n)
+            raw = bm25_score(query_tokens, dt.get(doc or "", set()), df, n)
             kw_norm = min(raw / 6.0, 1.0) if raw > 0 else 0.0
-            kw_norm = _keyword_boost(query, doc or "", kw_norm)
+            kw_norm = keyword_boost(query, doc or "", kw_norm)
             kw_scores[cid] = kw_norm
 
         # --- Semantic vector scores ---
