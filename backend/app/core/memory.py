@@ -311,7 +311,7 @@ class PinLimitExceeded(Exception):
 
 
 async def hybrid_retrieve(
-    db: AsyncSession, query: str, k: int = 5
+    db: AsyncSession, query: str, k: int = 5, pool: list[Memory] | None = None
 ) -> list[Memory]:
     """Retrieve memories relevant to the query.
 
@@ -319,15 +319,16 @@ async def hybrid_retrieve(
       1. Exclude pinned memories (always injected separately)
       2. Semantic + keyword union, each with cosine (vs) and BM25 (kw_norm)
       3. Fuse into a bounded relevance score; keep candidates above FUSION_THRESHOLD
-      4. Rerank survivors by cross-encoder relevance, cap at k
+      4. Rerank survivors by cross-encoder relevance when more than k, cap at k
     """
     query = query[:RETRIEVAL_QUERY_MAX_CHARS]
     if not query.strip():
         return []
-    all_mems = await list_memories(db)
-    if not all_mems:
-        return []
-    pool = [m for m in all_mems if not m.pinned]
+    if pool is None:
+        all_mems = await list_memories(db)
+        if not all_mems:
+            return []
+        pool = [m for m in all_mems if not m.pinned]
     if not pool:
         return []
 
@@ -343,12 +344,12 @@ async def hybrid_retrieve(
     if not kept:
         return []
 
-    # Rerank survivors by cross-encoder relevance (ordering only; does not veto).
-    scores = await _rerank_scores(db, query, [mem.text for mem in kept])
-    if scores is not None:
-        ranked = sorted(zip(kept, scores), key=lambda t: t[1], reverse=True)
-        return [mem for mem, _ in ranked[:k]]
-    logger.warning("Reranker failed, returning fusion-kept memories")
+    if len(kept) > k:
+        scores = await _rerank_scores(db, query, [mem.text[:512] for mem in kept])
+        if scores is not None:
+            ranked = sorted(zip(kept, scores), key=lambda t: t[1], reverse=True)
+            return [mem for mem, _ in ranked[:k]]
+        logger.warning("Reranker failed, returning fusion-kept memories")
     return kept[:k]
 
 
@@ -405,6 +406,7 @@ async def _rerank_scores(
 ) -> list[float] | None:
     """Cross-encoder scores for a batch of texts.
 
+    Each text is truncated to 512 chars to bound memory usage.
     Returns None if the reranker is unavailable, so the caller can fall back to
     the fusion-kept order.
     """
@@ -416,7 +418,7 @@ async def _rerank_scores(
 
         cache_dir = f"{get_settings().data_dir}/fastembed"
         reranker = get_reranker_engine(cache_dir=cache_dir)
-        return reranker.rerank(query, texts)
+        return reranker.rerank(query, [t[:512] for t in texts])
     except Exception as e:
         logger.warning("Reranker failed (%s)", e)
         return []
@@ -516,7 +518,8 @@ async def select_memories_for_query(
     for m in pinned[:_PINNED_CORE_LIMIT]:
         selected.append((m, "pinned"))
         seen.add(m.id)
-    for m in await hybrid_retrieve(db, query, k=10):
+    pool = [m for m in all_mems if not m.pinned]
+    for m in await hybrid_retrieve(db, query, k=10, pool=pool):
         if m.id not in seen:
             selected.append((m, "recalled"))
             seen.add(m.id)
