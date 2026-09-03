@@ -134,17 +134,6 @@ def parts_from_json(raw: str | None) -> list[MessagePart]:
     return [MessagePart(**p) for p in data if isinstance(p, dict)]
 
 
-def _tool_results_dict(tool_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return tool_results
-
-
-def _utf16_len(s: str) -> int:
-    # JS string length counts UTF-16 code units (astral chars = 2 units),
-    # while Python's len() counts code points. The frontend parser measures
-    # payloads with JS .length, so the length prefix must match that.
-    return len(s.encode("utf-16-le")) // 2
-
-
 def _format_tool_message(
     tc: ToolCall, ok: bool, content: str, args: dict[str, Any] | None = None
 ) -> str:
@@ -153,8 +142,8 @@ def _format_tool_message(
     body = json.dumps(content, ensure_ascii=False)
     return (
         f"{tc.name} | {'ok' if ok else 'failed'}"
-        f"\nA{_utf16_len(args_json)}\n{args_json}"
-        f"\nC{_utf16_len(body)}\n{body}"
+        f"\nA\n{args_json}"
+        f"\nC\n{body}"
     )
 
 
@@ -450,99 +439,14 @@ class ChatEngine:
     ) -> tuple[bool, str]:
         name = tc.name
         args = tc.arguments or {}
-        if name == "run_code":
-            code = str(args.get("code") or "").strip()
-            if not code:
-                return False, "run_code: missing 'code' argument"
-            language = str(args.get("language") or "python").strip().lower()
-            if language == "node":
-                language = "javascript"
-            if language not in ("python", "java", "javascript", "go"):
-                language = "python"
-            filename = {
-                "python": "main.py",
-                "javascript": "main.js",
-                "go": "main.go",
-                "java": "Main.java",
-            }[language]
-            try:
-                import httpx
-
-                url = f"{self.settings.piston_url}/api/v2/execute"
-                payload = {
-                    "language": language,
-                    "version": "*",
-                    "files": [{"name": filename, "content": code.replace("\r\n", "\n")}],
-                    "run_timeout": 60_000,
-                    "compile_timeout": 60_000,
-                    "run_memory_limit": 512 * 1024 * 1024,
-                }
-                res = await asyncio.wait_for(
-                    httpx.AsyncClient(timeout=300).post(url, json=payload), timeout=300
-                )
-                if res.status_code != 200:
-                    detail = ""
-                    try:
-                        detail = res.json().get("message", "")
-                    except Exception:
-                        pass
-                    return False, (
-                        f"run_code: piston error"
-                        + (f": {detail}" if detail else f" (HTTP {res.status_code})")
-                    )
-                result = res.json()
-                run = result.get("run") or {}
-                compile_ = result.get("compile") or {}
-                stdout = str(run.get("stdout") or "") + str(compile_.get("stdout") or "")
-                stderr = str(run.get("stderr") or "")
-                if compile_.get("stderr"):
-                    stderr = f"{compile_.get('stderr')}\n{stderr}".strip()
-                exit_code = int(run.get("code") or 0)
-                status = run.get("status")
-                timed_out = status in ("TO", "SG")
-                combined = stdout + (f"\n{stderr}" if stderr else "")
-                if not combined:
-                    combined = "(no output)"
-                if timed_out:
-                    combined += "\n[Execution timed out]"
-                combined += f"\n[exit code: {exit_code}]"
-                return True, combined
-            except asyncio.TimeoutError:
-                return False, "run_code: sandbox timed out"
-            except Exception as exc:
-                return False, f"run_code: sandbox error: {exc}"
-        cfg = await load_search_config(self.db)
-        if name == "web_search":
-            query = str(args.get("query") or "").strip()
-            if not query:
-                return False, "web_search: missing 'query' argument"
-            result = await search_and_fetch(
-                query,
-                cfg.searxng_url,
-                cfg.max_results,
-                cfg.fallback,
-                cfg.fetch_urls,
-                cfg.fetch_limit,
-                cfg.max_chars_per_url,
-            )
-            payload = {
-                "engine": result.get("engine"),
-                "results": result.get("results") or [],
-                "fetched": result.get("fetched") or [],
-            }
-            if not payload["results"] and not payload["fetched"]:
-                return False, f"web_search: no results for '{query}'"
-            return True, json.dumps(payload, ensure_ascii=False)
-        if name == "read_url":
-            url = str(args.get("url") or "").strip()
-            if not url:
-                return False, "read_url: missing 'url' argument"
-            requested = int(args.get("max_chars", cfg.max_chars_per_url))
-            limit = min(max(requested, 500), _READ_URL_MAX)
-            text = await fetch_url(url, limit)
-            if not text:
-                return False, f"read_url: could not read {url}"
-            return True, text
+        handlers = {
+            "run_code": self._execute_run_code,
+            "web_search": self._execute_web_search,
+            "read_url": self._execute_read_url,
+        }
+        handler = handlers.get(name)
+        if handler is not None:
+            return await handler(args)
         if "." in name:
             prefix, tool_name = name.split(".", 1)
             from app.core.mcp import call_mcp_tool, get_mcp_server_by_prefix
@@ -551,6 +455,103 @@ class ChatEngine:
             if server is not None:
                 return await call_mcp_tool(server, tool_name, args)
         return False, f"Unknown tool: {name}"
+
+    async def _execute_run_code(self, args: dict[str, Any]) -> tuple[bool, str]:
+        code = str(args.get("code") or "").strip()
+        if not code:
+            return False, "run_code: missing 'code' argument"
+        language = str(args.get("language") or "python").strip().lower()
+        if language == "node":
+            language = "javascript"
+        if language not in ("python", "java", "javascript", "go"):
+            language = "python"
+        filename = {
+            "python": "main.py",
+            "javascript": "main.js",
+            "go": "main.go",
+            "java": "Main.java",
+        }[language]
+        try:
+            import httpx
+
+            url = f"{self.settings.piston_url}/api/v2/execute"
+            payload = {
+                "language": language,
+                "version": "*",
+                "files": [{"name": filename, "content": code.replace("\r\n", "\n")}],
+                "run_timeout": 60_000,
+                "compile_timeout": 60_000,
+                "run_memory_limit": 512 * 1024 * 1024,
+            }
+            res = await asyncio.wait_for(
+                httpx.AsyncClient(timeout=300).post(url, json=payload), timeout=300
+            )
+            if res.status_code != 200:
+                detail = ""
+                try:
+                    detail = res.json().get("message", "")
+                except Exception:
+                    pass
+                return False, (
+                    f"run_code: piston error"
+                    + (f": {detail}" if detail else f" (HTTP {res.status_code})")
+                )
+            result = res.json()
+            run = result.get("run") or {}
+            compile_ = result.get("compile") or {}
+            stdout = str(run.get("stdout") or "") + str(compile_.get("stdout") or "")
+            stderr = str(run.get("stderr") or "")
+            if compile_.get("stderr"):
+                stderr = f"{compile_.get('stderr')}\n{stderr}".strip()
+            exit_code = int(run.get("code") or 0)
+            status = run.get("status")
+            timed_out = status in ("TO", "SG")
+            combined = stdout + (f"\n{stderr}" if stderr else "")
+            if not combined:
+                combined = "(no output)"
+            if timed_out:
+                combined += "\n[Execution timed out]"
+            combined += f"\n[exit code: {exit_code}]"
+            return True, combined
+        except asyncio.TimeoutError:
+            return False, "run_code: sandbox timed out"
+        except Exception as exc:
+            return False, f"run_code: sandbox error: {exc}"
+
+    async def _execute_web_search(self, args: dict[str, Any]) -> tuple[bool, str]:
+        cfg = await load_search_config(self.db)
+        query = str(args.get("query") or "").strip()
+        if not query:
+            return False, "web_search: missing 'query' argument"
+        result = await search_and_fetch(
+            query,
+            cfg.searxng_url,
+            cfg.max_results,
+            cfg.fallback,
+            cfg.fetch_urls,
+            cfg.fetch_limit,
+            cfg.max_chars_per_url,
+        )
+        payload = {
+            "engine": result.get("engine"),
+            "results": result.get("results") or [],
+            "fetched": result.get("fetched") or [],
+        }
+        if not payload["results"] and not payload["fetched"]:
+            return False, f"web_search: no results for '{query}'"
+        return True, json.dumps(payload, ensure_ascii=False)
+
+    async def _execute_read_url(self, args: dict[str, Any]) -> tuple[bool, str]:
+        cfg = await load_search_config(self.db)
+        url = str(args.get("url") or "").strip()
+        if not url:
+            return False, "read_url: missing 'url' argument"
+        requested = int(args.get("max_chars", cfg.max_chars_per_url))
+        limit = min(max(requested, 500), _READ_URL_MAX)
+        text = await fetch_url(url, limit)
+        if not text:
+            return False, f"read_url: could not read {url}"
+        return True, text
 
     async def stream_chat(
         self,
@@ -897,14 +898,20 @@ class ChatEngine:
                     model=model,
                 )
 
-                # Execute the tools and persist a tool message with the returned content.
+                # Execute the tools concurrently and persist a tool message with the returned content.
                 results: list[dict[str, Any]] = []
                 tool_parts_text: list[str] = []
-                for tc in iter_tool_calls:
+
+                async def _run_one(tc: ToolCall) -> tuple[ToolCall, bool, str]:
                     try:
                         ok, content = await self._execute_tool(tc, conversation_id)
                     except Exception as exc:
                         ok, content = False, str(exc)
+                    return tc, ok, content
+
+                for tc, ok, content in await asyncio.gather(
+                    *[_run_one(tc) for tc in iter_tool_calls],
+                ):
                     results.append(
                         {"id": tc.id, "name": tc.name, "ok": ok, "content": content}
                     )

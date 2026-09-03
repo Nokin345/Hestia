@@ -556,13 +556,8 @@ const toggleKb = () => {
         )
       } else if (e.event === 'memory_retrieved') {
         const id = target()
-        console.log('memory_retrieved event, target id:', id)
-        if (!id) {
-          console.log('no target id for memory_retrieved event')
-          return
-        }
+        if (!id) return
         const memories = e.data.memories ?? []
-        console.log('memories:', memories)
         retrievedStoreRef.current = { [id]: memories }
         setMessages((prev) =>
           prev.map((m) =>

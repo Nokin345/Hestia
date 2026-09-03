@@ -2,9 +2,9 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import auth as auth_router
@@ -19,22 +19,12 @@ from app.api.routes import ocr as ocr_router
 from app.api.routes import defaults as defaults_router
 from app.api.routes import search as search_router
 from app.api.routes import upload as upload_router
-from app.auth import current_authenticated
+from app.auth import require_auth
 from app.config import get_settings
 from app.db import init_db
 from app.core.embeddings import get_embedding_engine, get_reranker_engine
 
 logger = logging.getLogger(__name__)
-
-_PUBLIC_PATHS = {
-    "/",
-    "/health",
-    "/api/auth/login",
-    "/api/auth/me",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-}
 
 
 @asynccontextmanager
@@ -103,29 +93,20 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.middleware("http")
-    async def auth_middleware(request: Request, call_next):
-        path = request.url.path
-        if not any(path == p or path.startswith(p + "/") for p in ("/api",)):
-            return await call_next(request)
-        if path in _PUBLIC_PATHS or path.startswith("/api/auth/login"):
-            return await call_next(request)
-        if current_authenticated(request):
-            return await call_next(request)
-        return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
-
+    api = APIRouter(dependencies=[Depends(require_auth)])
+    api.include_router(conversations_router.router)
+    api.include_router(defaults_router.router)
+    api.include_router(embeddings_router.router)
+    api.include_router(kb_router.router)
+    api.include_router(mcp_router.router)
+    api.include_router(memories_router.router)
+    api.include_router(chat_router.router)
+    api.include_router(providers_router.router)
+    api.include_router(search_router.router)
+    api.include_router(ocr_router.router)
+    api.include_router(upload_router.router)
+    app.include_router(api)
     app.include_router(auth_router.router)
-    app.include_router(conversations_router.router)
-    app.include_router(defaults_router.router)
-    app.include_router(embeddings_router.router)
-    app.include_router(kb_router.router)
-    app.include_router(mcp_router.router)
-    app.include_router(memories_router.router)
-    app.include_router(chat_router.router)
-    app.include_router(providers_router.router)
-    app.include_router(search_router.router)
-    app.include_router(ocr_router.router)
-    app.include_router(upload_router.router)
 
     app.mount(
         "/uploads",
