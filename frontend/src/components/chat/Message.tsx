@@ -209,9 +209,10 @@ export const Markdown = memo(function Markdown({
   content: string
   className?: string
 }) {
+  const safe = content.split('```').length % 2 === 0 ? content + '\n```' : content
   return (
     <div className={className}>
-      <MarkdownRenderer markdown={content} className="prose-chat" />
+      <MarkdownRenderer markdown={safe} className="prose-chat" />
     </div>
   )
 })
