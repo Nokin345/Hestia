@@ -14,6 +14,15 @@ from app.schemas.chat import ChatRequest
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 
+def _query_title(parts) -> str:
+    """First text of the user's message, for use as the initial chat title."""
+    for p in parts:
+        text = (p.text or "").strip()
+        if text:
+            return text.replace("\n", " ")[:60]
+    return ""
+
+
 def _error_event(message: str) -> EventSourceResponse:
     return EventSourceResponse(
         iter([{"event": "error", "data": json.dumps({"message": message})}])
@@ -58,6 +67,8 @@ async def chat(body: ChatRequest, db: AsyncSession = Depends(get_db)):
             return _error_event("Conversation not found")
         conv.provider = provider_id
         conv.model = model
+        if conv.title == "New chat":
+            conv.title = _query_title(parts) or conv.title
         if body.skill_id is not None:
             conv.skill_id = body.skill_id
         if body.kb is not None:
@@ -80,7 +91,7 @@ async def chat(body: ChatRequest, db: AsyncSession = Depends(get_db)):
         await db.commit()
     else:
         conv = Conversation(
-            title="New chat",
+            title=_query_title(parts) or "New chat",
             provider=provider_id,
             model=model,
             skill_id=body.skill_id,

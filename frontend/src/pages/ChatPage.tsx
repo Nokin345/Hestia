@@ -179,6 +179,28 @@ export default function ChatPage() {
   }, [input])
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Stick-to-bottom: follow new content only while the user is already at the
+  // bottom. Scrolling up detaches until they return to the bottom.
+  const stickRef = useRef(true)
+  const handleScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+  useEffect(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    const inner = el.firstElementChild
+    if (!inner) return
+    // The markdown renderer grows content asynchronously after state updates,
+    // so observe size changes instead of scrolling on message state alone.
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight
+    })
+    ro.observe(inner)
+    return () => ro.disconnect()
+  }, [conversationId])
   // Keep the most recent retrieved-memory set in a ref so it can be reattached
   // to the assistant message after a conversation reload (e.g. the first-message
   // URL change to ?c=...) without losing the pill.
@@ -445,10 +467,6 @@ const toggleKb = () => {
     }
   }, [conversationId, reattachRetrieved])
 
-  useEffect(() => {
-    scrollRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
   const stop = () => {
     const convId = searchParams.get('c') || realConvIdRef.current
     const aiId = aiIdRef.current
@@ -523,6 +541,9 @@ const toggleKb = () => {
       if (e.event === 'conversation') {
         const cid = e.data.conversation_id
         if (cid) realConvIdRef.current = cid
+        // New chat: the row exists now (titled with the user's query) — show it
+        // in the sidebar immediately.
+        queryClient.invalidateQueries({ queryKey: ['conversations'] })
       } else if (e.event === 'delta') {
         const content = e.data.content
         upsertAssistant((m) =>
@@ -708,9 +729,43 @@ const toggleKb = () => {
         releaseWakeLock()
         setStreaming(false)
         abortRef.current = null
-        queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        void pollConversationTitle()
       }
     }
+
+  // The backend names conversations via a background utility-model task that
+  // finishes after the chat stream ends. Poll for the rename for up to 30s
+  // (every 2s), stopping early once the title actually changes. Reads the id
+  // from realConvIdRef since a brand-new chat has no conversationId state yet.
+  const pollConversationTitle = async () => {
+    const convId = conversationId || realConvIdRef.current
+    if (!convId) return
+    queryClient.invalidateQueries({ queryKey: ['conversations'] })
+    let initial: string | null = null
+    try {
+      const convs = await apiFetch<Conversation[]>(`/conversations`)
+      initial = convs.find((c) => c.id === convId)?.title ?? null
+    } catch {
+      return
+    }
+    const started = Date.now()
+    const interval = setInterval(async () => {
+      if (Date.now() - started > 30_000) {
+        clearInterval(interval)
+        return
+      }
+      try {
+        const convs = await apiFetch<Conversation[]>(`/conversations`)
+        const title = convs.find((c) => c.id === convId)?.title ?? null
+        if (title && title !== initial) {
+          clearInterval(interval)
+          queryClient.setQueryData<Conversation[]>(['conversations'], convs)
+        }
+      } catch {
+        // network hiccup — keep polling until the cap
+      }
+    }, 2_000)
+  }
 
   const sendEdit = async (messageId: string, newText: string) => {
       if (!conversationId || streaming) return
@@ -776,7 +831,7 @@ const toggleKb = () => {
         releaseWakeLock()
         setStreaming(false)
         abortRef.current = null
-        queryClient.invalidateQueries({ queryKey: ['conversations'] })
+        void pollConversationTitle()
       }
     }
 
@@ -1043,7 +1098,7 @@ const toggleKb = () => {
       onNewChat={startNewChat}
     >
       <div className="flex flex-1 flex-col overflow-hidden">
-        <div className="flex-1 overflow-y-auto">
+        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
           <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 pt-24 text-center">
@@ -1070,7 +1125,6 @@ const toggleKb = () => {
                 return renderAssistantTurn(turn)
               })
             )}
-            <div ref={scrollRef} />
           </div>
         </div>
 

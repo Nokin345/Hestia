@@ -1017,20 +1017,17 @@ class ChatEngine:
                 conv.provider = provider_id
                 conv.model = model
             first_user = "".join(p.text or "" for p in user_parts).strip()
-            if conv.title == "New chat":
-                text_parts = [p.text for p in assistant_parts if p.type == "text"]
-                if text_parts:
-                    first = text_parts[0].strip().replace("\n", " ")
-                    conv.title = first[:60]
-                if first_user:
-                    title_provider, title_model = await self._utility_model_for(provider_id, model)
-                    task = asyncio.create_task(
-                        self._title_conversation(
-                            conversation_id, title_provider, title_model, first_user
-                        )
+            # Conversations start titled with the user's query (set at creation);
+            # the utility model refines it into a proper title in the background.
+            if first_user:
+                title_provider, title_model = await self._utility_model_for(provider_id, model)
+                task = asyncio.create_task(
+                    self._title_conversation(
+                        conversation_id, title_provider, title_model, first_user
                     )
-                    _title_tasks.add(task)
-                    task.add_done_callback(_title_tasks.discard)
+                )
+                _title_tasks.add(task)
+                task.add_done_callback(_title_tasks.discard)
             await self.db.commit()
 
         yield {
