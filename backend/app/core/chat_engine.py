@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -669,8 +669,6 @@ class ChatEngine:
                 }
         if kb_enabled:
             try:
-                from sqlalchemy import select
-
                 from app.core.kb_vector import get_kb_store
                 from app.models import KbDocument
 
@@ -1019,15 +1017,28 @@ class ChatEngine:
             first_user = "".join(p.text or "" for p in user_parts).strip()
             # Conversations start titled with the user's query (set at creation);
             # the utility model refines it into a proper title in the background.
+            # Only do this on the first exchange — count user messages to detect it
+            # (the current message is already saved by this point).
             if first_user:
-                title_provider, title_model = await self._utility_model_for(provider_id, model)
-                task = asyncio.create_task(
-                    self._title_conversation(
-                        conversation_id, title_provider, title_model, first_user
+                user_count = (
+                    await self.db.execute(
+                        select(func.count())
+                        .select_from(Message)
+                        .where(
+                            Message.conversation_id == conversation_id,
+                            Message.role == "user",
+                        )
                     )
-                )
-                _title_tasks.add(task)
-                task.add_done_callback(_title_tasks.discard)
+                ).scalar_one()
+                if user_count == 1:
+                    title_provider, title_model = await self._utility_model_for(provider_id, model)
+                    task = asyncio.create_task(
+                        self._title_conversation(
+                            conversation_id, title_provider, title_model, first_user
+                        )
+                    )
+                    _title_tasks.add(task)
+                    task.add_done_callback(_title_tasks.discard)
             await self.db.commit()
 
         yield {
