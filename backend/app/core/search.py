@@ -1,10 +1,13 @@
 import asyncio
 import html
 import html.parser as _hp
+import logging
 import re
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 _SEARXNG_TIMEOUT = 10.0
 _DDG_URL = "https://html.duckduckgo.com/html/"
@@ -190,17 +193,70 @@ def _classify_content_type(content_type: str) -> str:
     return "generic"
 
 
+def _html_to_text(raw: str, max_chars: int) -> str:
+    """Run raw HTML through the token-efficient text extractor."""
+    parser = _TextExtractor()
+    parser.feed(raw)
+    parser.close()
+    text = parser.text()
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text[:max_chars]
+
+
 async def fetch_url(url: str, max_chars: int = 4000) -> str:
     """Fetch a page and return readable content.
 
     HTML is converted to plain text; JSON and plain/text formats are passed
     through as fenced text. Binary/media responses return ``""``. Output is
     capped at ``max_chars``.
+
+    Any failure (auth/bot blocks, empty JS-only shell pages) falls back to a
+    headless lightpanda render (if the lightpanda-py package is installed)
+    and reuses the same text extractor on the rendered DOM.
     """
     headers = {
         "User-Agent": _BROWSER_UA,
         "Accept": "text/html,application/xhtml+xml,application/json,text/plain,*/*",
     }
+    try:
+        async with httpx.AsyncClient(
+            timeout=_FETCH_TIMEOUT, follow_redirects=True
+        ) as client:
+            resp = await client.get(url, headers=headers)
+            resp.raise_for_status()
+            ctype = resp.headers.get("content-type") or ""
+            if _classify_content_type(ctype) == "binary":
+                return ""
+            content = resp.content[:_FETCH_MAX_BYTES]
+        raw = content.decode("utf-8", errors="ignore")
+
+        kind = _classify_content_type(ctype)
+        if kind in ("json", "text"):
+            text = raw.strip()[:max_chars]
+            if text:
+                return text
+            return ""
+
+        text = _html_to_text(raw, max_chars)
+        if text:
+            return text
+        # 200 but no extractable text — treated as unusable (JS-only shell
+        # pages, bot interstitials) and falls through to the browser render.
+    except (httpx.HTTPError, RuntimeError) as e:
+        logger.info("Direct fetch failed for %s (%s) — trying lightpanda", url, e)
+    except httpx.InvalidURL:
+        raise
+
+    # Direct fetch unusable — try a real browser render before giving up.
+    rendered = await _fetch_via_lightpanda(url)
+    if rendered:
+        return _html_to_text(rendered[:_FETCH_MAX_BYTES], max_chars)
+    return await _fetch_url_strict(url, max_chars, headers)
+
+
+async def _fetch_url_strict(url: str, max_chars: int, headers: dict) -> str:
+    """Re-raise the original direct-fetch error so the caller sees why."""
     async with httpx.AsyncClient(
         timeout=_FETCH_TIMEOUT, follow_redirects=True
     ) as client:
@@ -209,20 +265,33 @@ async def fetch_url(url: str, max_chars: int = 4000) -> str:
         ctype = resp.headers.get("content-type") or ""
         if _classify_content_type(ctype) == "binary":
             return ""
-        content = resp.content[:_FETCH_MAX_BYTES]
-    raw = content.decode("utf-8", errors="ignore")
-
+        raw = resp.content[:_FETCH_MAX_BYTES].decode("utf-8", errors="ignore")
     kind = _classify_content_type(ctype)
     if kind in ("json", "text"):
         return raw.strip()[:max_chars]
+    return _html_to_text(raw, max_chars)
 
-    parser = _TextExtractor()
-    parser.feed(raw)
-    parser.close()
-    text = parser.text()
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text[:max_chars]
+
+async def _fetch_via_lightpanda(url: str) -> str:
+    """Render a page with lightpanda's bundled headless browser.
+
+    Returns "" when lightpanda-py is unavailable or the render fails, so the
+    caller can degrade gracefully.
+    """
+    try:
+        import lightpanda
+    except ImportError:
+        return ""
+    try:
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: lightpanda.fetch(url, dump="html", wait_ms=8000),
+        )
+        return response.text or ""
+    except Exception as e:
+        logger.warning("lightpanda render failed for %s: %s", url, e)
+        return ""
 
 
 async def search_and_fetch(

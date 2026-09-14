@@ -179,26 +179,46 @@ export default function ChatPage() {
   }, [input])
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
-  // Stick-to-bottom: follow new content only while the user is already at the
-  // bottom. Scrolling up detaches until they return to the bottom.
+  const contentRef = useRef<HTMLDivElement>(null)
+  // Stick-to-bottom: follow new content only while the user is at the bottom.
+  // Scrolling events never *disable* sticking — programmatic scrolls fire
+  // scroll events too and can race with content growth, so disabling happens
+  // only on explicit upward user intent (wheel up / touch swipe up).
   const stickRef = useRef(true)
+  const lastTouchY = useRef<number | null>(null)
+  const scrollToBottom = () => {
+    const el = scrollRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }
   const handleScroll = () => {
     const el = scrollRef.current
     if (!el) return
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) stickRef.current = true
+  }
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.deltaY < 0) stickRef.current = false
+  }
+  const handleTouchStart = (e: React.TouchEvent) => {
+    lastTouchY.current = e.touches[0]?.clientY ?? null
+  }
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const y = e.touches[0]?.clientY
+    if (y !== undefined && lastTouchY.current !== null && y > lastTouchY.current) {
+      stickRef.current = false
+    }
+    lastTouchY.current = y ?? null
   }
   useEffect(() => {
-    const el = scrollRef.current
+    const el = contentRef.current
     if (!el) return
-    el.scrollTop = el.scrollHeight
-    const inner = el.firstElementChild
-    if (!inner) return
-    // The markdown renderer grows content asynchronously after state updates,
-    // so observe size changes instead of scrolling on message state alone.
+    scrollToBottom()
+    // The markdown renderer grows content asynchronously after state updates
+    // (KaTeX, highlighting, font swaps), so follow size changes of the stable
+    // content wrapper instead of scrolling on message state alone.
     const ro = new ResizeObserver(() => {
-      if (stickRef.current) el.scrollTop = el.scrollHeight
+      if (stickRef.current) scrollToBottom()
     })
-    ro.observe(inner)
+    ro.observe(el)
     return () => ro.disconnect()
   }, [conversationId])
   // Keep the most recent retrieved-memory set in a ref so it can be reattached
@@ -691,6 +711,8 @@ const toggleKb = () => {
       setMessages((prev) => [...prev, tempUser, tempAssistant])
       setAttachments([])
       setStreaming(true)
+      stickRef.current = true
+      scrollToBottom()
       void acquireWakeLock()
       aiIdRef.current = tempAssistant.id
 
@@ -794,6 +816,8 @@ const toggleKb = () => {
         return [...prev.slice(0, idx), edited, tempAssistant]
       })
       setStreaming(true)
+      stickRef.current = true
+      scrollToBottom()
       void acquireWakeLock()
       aiIdRef.current = tempAssistant.id
 
@@ -1098,8 +1122,15 @@ const toggleKb = () => {
       onNewChat={startNewChat}
     >
       <div className="flex flex-1 flex-col overflow-hidden">
-        <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
-          <div className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
+        <div
+          ref={scrollRef}
+          onScroll={handleScroll}
+          onWheel={handleWheel}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          className="flex-1 overflow-y-auto"
+        >
+          <div ref={contentRef} className="mx-auto flex max-w-3xl flex-col gap-5 px-4 py-6">
             {messages.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 pt-24 text-center">
                 <div className="flex size-12 items-center justify-center rounded-2xl bg-indigo-700/20">
