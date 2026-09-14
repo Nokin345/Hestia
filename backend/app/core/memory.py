@@ -319,7 +319,7 @@ async def hybrid_retrieve(
       1. Exclude pinned memories (always injected separately)
       2. Semantic + keyword union, each with cosine (vs) and BM25 (kw_norm)
       3. Fuse into a bounded relevance score; keep candidates above FUSION_THRESHOLD
-      4. Rerank survivors by cross-encoder relevance when more than k, cap at k
+      4. Sort by fused score; remote reranker (if configured) reorders when more than k
     """
     query = query[:RETRIEVAL_QUERY_MAX_CHARS]
     if not query.strip():
@@ -336,21 +336,21 @@ async def hybrid_retrieve(
     if not candidates:
         return []
 
-    kept = [
-        mem
+    fused = [
+        (mem, _fused_score(vs, kw_norm, _recency_freshness(mem)))
         for mem, vs, kw_norm in candidates
-        if _fused_score(vs, kw_norm, _recency_freshness(mem)) > FUSION_THRESHOLD
     ]
+    kept = [(mem, score) for mem, score in fused if score > FUSION_THRESHOLD]
     if not kept:
         return []
 
+    # Rank by fused score; remote reranker (if configured) overrides the order.
+    kept.sort(key=lambda t: t[1], reverse=True)
     if len(kept) > k:
-        scores = await _rerank_scores(db, query, [mem.text[:512] for mem in kept])
-        if scores is not None:
-            ranked = sorted(zip(kept, scores), key=lambda t: t[1], reverse=True)
-            return [mem for mem, _ in ranked[:k]]
-        logger.warning("Reranker failed, returning fusion-kept memories")
-    return kept[:k]
+        reranked = await _rerank_scores(db, query, [mem.text[:512] for mem, _ in kept])
+        if reranked is not None:
+            kept = [pair for pair, _ in sorted(zip(kept, reranked), key=lambda t: t[1], reverse=True)]
+    return [mem for mem, _ in kept[:k]]
 
 
 async def search_memories(
@@ -404,24 +404,48 @@ async def search_memories(
 async def _rerank_scores(
     db: AsyncSession, query: str, texts: list[str]
 ) -> list[float] | None:
-    """Cross-encoder scores for a batch of texts.
+    """Remote reranker scores for a batch of texts.
 
-    Each text is truncated to 512 chars to bound memory usage.
-    Returns None if the reranker is unavailable, so the caller can fall back to
-    the fusion-kept order.
+    Returns None when no remote reranker is configured or the call fails,
+    so the caller keeps the fused-score order.
     """
     if not texts:
         return None
-    try:
-        from app.config import get_settings
-        from app.core.embeddings import get_reranker_engine
+    from app.core.reranker_config import load_reranker_config
 
-        cache_dir = f"{get_settings().data_dir}/fastembed"
-        reranker = get_reranker_engine(cache_dir=cache_dir)
-        return reranker.rerank(query, [t[:512] for t in texts])
+    cfg = await load_reranker_config(db)
+    if not cfg.use_remote:
+        return None
+    try:
+        import httpx
+
+        headers = {"Content-Type": "application/json"}
+        if cfg.api_key:
+            headers["Authorization"] = f"Bearer {cfg.api_key}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                cfg.url,
+                headers=headers,
+                json={
+                    "model": cfg.model,
+                    "query": query,
+                    "documents": texts,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        # Jina/Cohere-style response: {"results": [{"index": 0, "relevance_score": ...}, ...]}
+        results = data.get("results", [])
+        scores = [0.0] * len(texts)
+        for item in results:
+            idx = item.get("index")
+            score = item.get("relevance_score", 0.0)
+            if idx is not None and 0 <= idx < len(scores):
+                scores[idx] = float(score)
+        return scores
     except Exception as e:
-        logger.warning("Reranker failed (%s)", e)
-        return []
+        logger.warning("Remote reranker failed (%s)", e)
+        return None
 
 
 async def _union_with_scores(

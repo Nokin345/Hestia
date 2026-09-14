@@ -201,6 +201,17 @@ export interface OcrConfig {
   has_api_key: boolean
 }
 
+export interface RerankerConfig {
+  url: string
+  model: string
+  has_api_key: boolean
+}
+
+export interface RerankerTestResult {
+  ok: boolean
+  message: string
+}
+
 export interface OcrTestResult {
   ok: boolean
   message: string

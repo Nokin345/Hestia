@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     ocr_model: str = ""
     ocr_api_key: str = ""
 
+    reranker_url: str = ""
+    reranker_api_key: str = ""
+    reranker_model: str = ""
+
     max_tool_iterations: int = 8
 
     @property

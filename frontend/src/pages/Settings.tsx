@@ -7,6 +7,7 @@ import { Layout } from '../components/layout/Layout'
 import { Button, Input } from '../components/ui'
 import { SearchSettings } from '../components/settings/SearchSettings'
 import { OcrSettings } from '../components/settings/OcrSettings'
+import { RerankerSettings } from '../components/settings/RerankerSettings'
 import { DefaultsSettings } from '../components/settings/DefaultsSettings'
 
 export default function SettingsPage() {
@@ -844,6 +845,8 @@ export default function SettingsPage() {
         </div>
 
         <OcrSettings />
+
+        <RerankerSettings />
 
         <div className="mt-6">
           <h2 className="text-sm font-medium uppercase tracking-wide text-zinc-400">Web</h2>

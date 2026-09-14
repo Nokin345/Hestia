@@ -8,6 +8,7 @@ from app.api.routes import (
     memories,
     ocr,
     providers,
+    reranker,
     search,
     upload,
 )
@@ -22,6 +23,7 @@ __all__ = [
     "memories",
     "ocr",
     "providers",
+    "reranker",
     "search",
     "upload",
 ]

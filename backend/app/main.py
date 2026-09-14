@@ -16,13 +16,14 @@ from app.api.routes import mcp as mcp_router
 from app.api.routes import memories as memories_router
 from app.api.routes import providers as providers_router
 from app.api.routes import ocr as ocr_router
+from app.api.routes import reranker as reranker_router
 from app.api.routes import defaults as defaults_router
 from app.api.routes import search as search_router
 from app.api.routes import upload as upload_router
 from app.auth import require_auth
 from app.config import get_settings
 from app.db import init_db
-from app.core.embeddings import get_embedding_engine, get_reranker_engine
+from app.core.embeddings import get_embedding_engine
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +36,11 @@ async def lifespan(app: FastAPI):
 
 
 async def _warmup_model_engine() -> None:
-    """Load the embedding + reranker engines once and run a probe call so the
+    """Load the embedding engine once and run a probe call so the
     first memory query does not pay the model-load cold-start cost."""
-    from app.core.embeddings import _EMBED_MODEL, _RERANK_MODEL
+    from app.core.embeddings import _EMBED_MODEL
 
     cache_dir = f"{get_settings().data_dir}/fastembed"
-    try:
-        reranker = get_reranker_engine(cache_dir=cache_dir)
-        reranker.rerank("warmup", ["warmup probe document"])
-        logger.info("Reranker %s warmed up", _RERANK_MODEL)
-    except Exception as e:
-        logger.warning("Reranker warm-up failed (%s); models load lazily on first query", e)
     try:
         get_embedding_engine(cache_dir=cache_dir).encode(["warmup probe"])
         logger.info("Embedding %s warmed up", _EMBED_MODEL)
@@ -105,6 +100,7 @@ def create_app() -> FastAPI:
     api.include_router(search_router.router)
     api.include_router(ocr_router.router)
     api.include_router(upload_router.router)
+    api.include_router(reranker_router.router)
     app.include_router(api)
     app.include_router(auth_router.router)
 

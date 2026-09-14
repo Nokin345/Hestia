@@ -586,8 +586,8 @@ const toggleKb = () => {
         const body = JSON.stringify(e.data.content ?? '')
         const block =
           `${e.data.name} | ${e.data.ok ? 'ok' : 'failed'}` +
-          `\nA${argsJson.length}\n${argsJson}` +
-          `\nC${body.length}\n${body}`
+          `\nA\n${argsJson}` +
+          `\nC\n${body}`
         setMessages((prev) => {
           const last = prev[prev.length - 1]
           // Same round: consecutive tool events (the backend emits them all
