@@ -693,8 +693,8 @@ const toggleKb = () => {
         conversation_id: conversationId ?? '',
         role: 'user',
         parts: [
-          ...attachmentParts(attachments),
           ...(content ? [{ type: 'text', text: content }] : []),
+          ...attachmentParts(attachments),
         ],
         created_at: new Date().toISOString(),
         temp: true,

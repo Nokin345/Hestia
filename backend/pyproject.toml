@@ -27,6 +27,7 @@ dependencies = [
     "rapidocr>=3.9.2",
     "mcp>=1.28,<2",
     "lightpanda-py>=0.2.8",
+    "pillow>=10.0.0",
 ]
 
 [tool.uv]
